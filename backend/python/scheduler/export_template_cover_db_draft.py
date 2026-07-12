@@ -1,6 +1,6 @@
 """Export V3.5 template cover result into DB-ready dry-run JSONL files.
 
-This script does not connect to MySQL. It converts template_cover_v1.json into
+This script does not connect to MySQL. It converts the phase cover JSON into
 rows shaped like the target database tables so the schema and data can be
 reviewed before real insertion.
 """
@@ -12,12 +12,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scheduler.template_cover_v1 import DEFAULT_OUTPUT_PATH as DEFAULT_COVER_PATH
+from scheduler.phase_scheduler import DEFAULT_OUTPUT_PATH as DEFAULT_COVER_PATH
 
 DEFAULT_OUTPUT_DIR = DEFAULT_COVER_PATH.parent / "db_draft"
 DEFAULT_REPORT_PATH = DEFAULT_OUTPUT_DIR / "export_report.json"
 
-ALGORITHM_VERSION = "v3.5-template-cover-v1"
+ALGORITHM_VERSION = "v3.5-phase-cover-v1"
 
 
 def export_db_draft(
@@ -87,28 +87,31 @@ def export_db_draft(
             fragment_id += 1
 
     if template_rows:
-        # Determine week split: T1 covers first N weeks based on max duration_weeks of its fragments
-        t1_fragments = templates[0].get("fragments", []) if templates else []
-        t1_weeks = max((_safe_int(f.get("duration_weeks")) for f in t1_fragments), default=9)
-        t1_weeks = max(1, min(t1_weeks, total_weeks - 1))
-
-        for week_number in range(1, total_weeks + 1):
-            if week_number <= t1_weeks and len(template_rows) > 0:
-                template_row = template_rows[0]
-            elif len(template_rows) > 1:
-                template_row = template_rows[1]
-            else:
-                template_row = template_rows[0]
-            week_rows.append({
-                "id": week_number,
-                "allocation_task_id": allocation_task_id,
-                "generation_run_id": generation_run_id,
-                "week_number": week_number,
-                "template_id": template_row["id"],
-                "template_code": template_row["template_code"],
-                "source_type": "AUTO",
-                "notes": f"v1 template-week mapping: T1 covers weeks 1-{t1_weeks}, T2 covers weeks {t1_weeks + 1}-{total_weeks}",
-            })
+        # 周映射按各模板的 week_budget 顺序铺开 (phase 引擎产出); 无预算信息时均分兜底.
+        budgets = [_safe_int(template.get("week_budget")) for template in templates]
+        if sum(budgets) != total_weeks or any(b <= 0 for b in budgets):
+            base = total_weeks // max(1, len(template_rows))
+            budgets = [base] * len(template_rows)
+            budgets[-1] += total_weeks - sum(budgets)
+        mapping_note = "phase week mapping: " + ", ".join(
+            f"{row['template_code']}×{budget}" for row, budget in zip(template_rows, budgets)
+        )
+        week_number = 1
+        for template_row, budget in zip(template_rows, budgets):
+            for _ in range(budget):
+                if week_number > total_weeks:
+                    break
+                week_rows.append({
+                    "id": week_number,
+                    "allocation_task_id": allocation_task_id,
+                    "generation_run_id": generation_run_id,
+                    "week_number": week_number,
+                    "template_id": template_row["id"],
+                    "template_code": template_row["template_code"],
+                    "source_type": "AUTO",
+                    "notes": mapping_note,
+                })
+                week_number += 1
 
     files = {
         "schedule_templates": output_dir / "schedule_templates.jsonl",
@@ -172,6 +175,8 @@ def _fragment_row(
         "day_of_week": _safe_int(fragment.get("day_of_week")),
         "period_index": _safe_int(fragment.get("period_index")),
         "consecutive_slots": _safe_int(fragment.get("consecutive_slots")),
+        "duration_weeks": _safe_int(fragment.get("duration_weeks")) or None,
+        "session_hours": _safe_int(fragment.get("session_hours")) or None,
         "required_room_type": fragment.get("required_room_type"),
         "source_type": "AUTO",
         "lock_status": "UNLOCKED",

@@ -27,19 +27,23 @@ brew install libomp      # macOS: lightgbm 的 OpenMP 运行时
 ```text
 run_pipeline.py               全链路编排 (Java V35TemplateGenerationService 调用入口)
 pattern_builder.py            课时 → (每周频次, 持续周数) 查表
-template_builder_v1.py        单张周模板贪心放格 (占用索引 + 兜底全枚举)
-template_cover_v1.py          迭代覆盖 (将被 phase 分段方案取代)
-phase_prototype.py            ★ 分段排课原型: 合班 → 装箱 → 双模板放格 → 守恒校验 (下阶段主线)
+phase_scheduler.py            ★ 分段周模板引擎: 合班 → 分段装箱 → 段内放格(模型软偏好
+                              + 全枚举兜底 + 搬迁修复) → 冲突/课时守恒自检
 placement_single_model.py     LightGBM 单模型: 任务特征 → TopK (教室|day|period), 分数只作软偏好
 paths.py                      共享数据/模型路径常量
 clean_training_samples.py     训练样本清洗
 fetch_allocation_teaching_tasks.py   从 DB 拉取排课任务
-export_template_cover_db_draft.py    模板 → 四表 JSONL (schedule_template/_week/_fragment/_slot)
-export_template_as_scheme.py         模板 → allocation_scheme (前端方案视图)
+export_template_cover_db_draft.py    cover → 四表 JSONL, week 映射按各模板 week_budget 铺开
+export_template_as_scheme.py         cover → allocation_scheme (前端方案视图)
 import_db_draft_to_mysql.py          DB draft 入库
-query_db_draft_timetable.py          按周展开查询 + 换周模拟
-validate_*.py                        各环节校验 (patterns / template / cover / db draft)
+query_db_draft_timetable.py          按周展开(遵守相对掩码) + 换周模拟
+validate_patterns.py / validate_db_draft_export.py   环节校验
 ```
+
+课时守恒的相对掩码语义: fragment 带 `duration_weeks`, 展开第 w 周时仅当 w 在其模板
+映射周中的出现序号 ≤ duration_weeks 才生效; 跨段课在后段模板只承担扣除前段预算后的
+份额。换周(交换 schedule_template_week 行)不破坏该语义。Java 侧
+`AllocationTemplateMapper.findWeekTimetable*` 用同一规则过滤。
 
 一键跑排课（不入库）：
 

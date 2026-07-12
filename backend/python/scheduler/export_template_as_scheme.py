@@ -15,7 +15,7 @@ from typing import Any
 
 from scheduler.export_template_cover_db_draft import DEFAULT_COVER_PATH
 from scheduler.paths import OUTPUT_DIR as PLACEMENT_OUTPUT_DIR
-from scheduler.validate_template_cover_v1 import DEFAULT_REPORT_PATH as DEFAULT_COVER_VALIDATION_REPORT_PATH
+from scheduler.phase_scheduler import DEFAULT_REPORT_PATH as DEFAULT_COVER_VALIDATION_REPORT_PATH
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -67,13 +67,16 @@ def import_template_schemes(
 
             display_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             validation_report = _read_validation_report(validation_report_path)
+            conflicts = validation_report.get("conflicts") or {}
+            hard_conflict_count = sum(
+                _safe_int(count)
+                for audit in conflicts.values()
+                for count in (audit or {}).values()
+            )
             conflict_summary = validation_report.get("conflict_summary") or {
-                "hard_conflict_count": 0,
-                "teacher_groups": 0,
-                "class_groups": 0,
-                "room_groups": 0,
-                "segment_boundary_issues": 0,
-                "hour_issues": 0,
+                "hard_conflict_count": hard_conflict_count,
+                "conservation_mismatch": _safe_int(validation_report.get("conservation_mismatch")),
+                "unplaced_tasks": _safe_int(validation_report.get("remaining_task_count")),
             }
             is_valid = _safe_int(conflict_summary.get("hard_conflict_count")) == 0
             scheme = {
@@ -85,11 +88,11 @@ def import_template_schemes(
                     "task_count": task_count,
                     "slot_count": slot_count,
                     "weeks": all_weeks,
-                    "validation_issue_count": validation_report.get("issue_count", 0),
-                    "validation_issues_preview": validation_report.get("issues_preview", [])[:20],
+                    "validation_issue_count": validation_report.get("validation_issue_count", 0),
+                    "phase_weeks": validation_report.get("phase_weeks"),
                 }, ensure_ascii=False),
                 "scheme_score": None,
-                "model_version": "v3.5-tcv1",
+                "model_version": "v3.5-phase",
                 "conflict_summary": json.dumps(conflict_summary, ensure_ascii=False),
                 "valid": is_valid,
                 "status": "CANDIDATE",

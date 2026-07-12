@@ -21,27 +21,7 @@ DEFAULT_SWAP_OUTPUT = DEFAULT_OUTPUT_DIR / "week_swap_simulation.json"
 
 def query_week(*, input_dir: Path = DEFAULT_OUTPUT_DIR, week_number: int, output_path: Path | None = DEFAULT_QUERY_OUTPUT) -> dict[str, Any]:
     data = _load_draft(input_dir)
-    week_row = _week_row(data["weeks"], week_number)
-    template_id = week_row["template_id"]
-    fragments = [row for row in data["fragments"] if row["template_id"] == template_id]
-    slots = [row for row in data["slots"] if row["template_id"] == template_id]
-    fragment_by_id = {row["id"]: row for row in fragments}
-
-    entries = []
-    for slot in slots:
-        fragment = fragment_by_id.get(slot["template_fragment_id"])
-        if not fragment:
-            continue
-        entries.append(_entry_from_slot(week_number, week_row, fragment, slot))
-    entries.sort(key=lambda item: (item["day_of_week"], item["period_index"], item["classroom_name"], item["class_name"] or ""))
-
-    result = {
-        "week_number": week_number,
-        "template_id": template_id,
-        "template_code": week_row["template_code"],
-        "entry_count": len(entries),
-        "entries": entries,
-    }
+    result = _query_week_from_data(data, week_number)
     if output_path:
         output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
@@ -98,22 +78,35 @@ def simulate_swap(
 def _query_week_from_data(data: dict[str, list[dict[str, Any]]], week_number: int) -> dict[str, Any]:
     week_row = _week_row(data["weeks"], week_number)
     template_id = week_row["template_id"]
+    occurrence = _week_occurrence(data["weeks"], template_id, week_number)
     fragments = [row for row in data["fragments"] if row["template_id"] == template_id]
     slots = [row for row in data["slots"] if row["template_id"] == template_id]
     fragment_by_id = {row["id"]: row for row in fragments}
     entries = []
     for slot in slots:
         fragment = fragment_by_id.get(slot["template_fragment_id"])
-        if fragment:
-            entries.append(_entry_from_slot(week_number, week_row, fragment, slot))
+        if not fragment:
+            continue
+        # 相对掩码: 课程只在其模板被映射到的前 duration_weeks 个周上生效
+        duration = int(fragment.get("duration_weeks") or 0)
+        if duration > 0 and occurrence > duration:
+            continue
+        entries.append(_entry_from_slot(week_number, week_row, fragment, slot))
     entries.sort(key=lambda item: (item["day_of_week"], item["period_index"], item["classroom_name"], item["class_name"] or ""))
     return {
         "week_number": week_number,
         "template_id": template_id,
         "template_code": week_row["template_code"],
+        "week_occurrence": occurrence,
         "entry_count": len(entries),
         "entries": entries,
     }
+
+
+def _week_occurrence(weeks: list[dict[str, Any]], template_id: Any, week_number: int) -> int:
+    """week_number 在该模板全部映射周(升序)中的出现序号, 1 起."""
+    mapped = sorted(int(row["week_number"]) for row in weeks if row["template_id"] == template_id)
+    return mapped.index(week_number) + 1 if week_number in mapped else 0
 
 
 def _entry_from_slot(week_number: int, week_row: dict[str, Any], fragment: dict[str, Any], slot: dict[str, Any]) -> dict[str, Any]:

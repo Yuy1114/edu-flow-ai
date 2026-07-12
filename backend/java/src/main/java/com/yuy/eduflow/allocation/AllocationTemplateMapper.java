@@ -104,6 +104,13 @@ public interface AllocationTemplateMapper {
 		  ON f.id = s.template_fragment_id
 		WHERE tw.allocation_task_id = #{allocationTaskId}
 		  AND tw.week_number = #{weekNumber}
+		  AND (f.duration_weeks IS NULL OR f.duration_weeks >= (
+		      SELECT COUNT(*) FROM schedule_template_week tw2
+		      WHERE tw2.template_id = tw.template_id
+		        AND tw2.allocation_task_id = tw.allocation_task_id
+		        AND tw2.generation_run_id = tw.generation_run_id
+		        AND tw2.week_number <= tw.week_number
+		  ))
 		ORDER BY s.day_of_week, s.period_index, f.classroom_name, f.class_name, f.course_name
 		""")
 	List<AllocationTemplateTimetableEntry> findWeekTimetable(
@@ -140,6 +147,13 @@ public interface AllocationTemplateMapper {
 		WHERE tw.allocation_task_id = #{allocationTaskId}
 		  AND tw.generation_run_id = #{generationRunId}
 		  AND tw.week_number = #{weekNumber}
+		  AND (f.duration_weeks IS NULL OR f.duration_weeks >= (
+		      SELECT COUNT(*) FROM schedule_template_week tw2
+		      WHERE tw2.template_id = tw.template_id
+		        AND tw2.allocation_task_id = tw.allocation_task_id
+		        AND tw2.generation_run_id = tw.generation_run_id
+		        AND tw2.week_number <= tw.week_number
+		  ))
 		ORDER BY s.day_of_week, s.period_index, f.classroom_name, f.class_name, f.course_name
 		""")
 	List<AllocationTemplateTimetableEntry> findWeekTimetableByRun(

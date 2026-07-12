@@ -32,11 +32,10 @@ from scheduler.pattern_builder import build_patterns
 from scheduler.paths import OUTPUT_DIR as PLACEMENT_OUTPUT_DIR
 from scheduler.placement_single_model import OUTPUT_DIR as SINGLE_MODEL_DIR
 from scheduler.placement_single_model import train as train_single_model
+from scheduler.phase_scheduler import build_phase_cover
 from scheduler.query_db_draft_timetable import query_week, simulate_swap
-from scheduler.template_cover_v1 import build_cover
 from scheduler.validate_db_draft_export import validate_export
 from scheduler.validate_patterns import validate as validate_patterns
-from scheduler.validate_template_cover_v1 import validate_cover
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -75,7 +74,8 @@ def run_pipeline(
     allocation_task_id: int = 1,
     total_weeks: int = 18,
     top_k: int = 300,
-    max_templates: int = 8,
+    max_templates: int = 8,  # deprecated: phase 引擎固定两段, 保留只为兼容旧调用方
+    phase_weeks: tuple[int, ...] | None = None,
     train_model: bool = False,
     model_rounds: int = 160,
     import_db: bool = False,
@@ -123,28 +123,22 @@ def run_pipeline(
         input_path=patterns_path, report_path=pattern_validation_path,
     ))
 
-    # --- Build template cover ---
+    # --- Build phase cover (分段周模板; 自带冲突/课时守恒自检) ---
     allowed_weekdays, allowed_periods = _load_allowed_config(allocation_task_id)
-    cover_path = run_dir / "template_cover_v1.json"
-    cover_report_path = run_dir / "template_cover_v1_report.json"
-    unresolved_path = run_dir / "template_cover_v1_unresolved.jsonl"
-    cover_report = _step(steps, "build_template_cover", lambda: build_cover(
+    resolved_phase_weeks = phase_weeks or _default_phase_weeks(total_weeks)
+    cover_path = run_dir / "phase_cover.json"
+    cover_report_path = run_dir / "phase_cover_report.json"
+    unresolved_path = run_dir / "phase_cover_unresolved.jsonl"
+    cover_report = _step(steps, "build_phase_cover", lambda: build_phase_cover(
         patterns_path=patterns_path,
         model_dir=SINGLE_MODEL_DIR,
         output_path=cover_path,
         report_path=cover_report_path,
         unresolved_path=unresolved_path,
+        phase_weeks=resolved_phase_weeks,
         top_k=top_k,
-        max_templates=max_templates,
-        enable_fallback=True,
         allowed_weekdays=allowed_weekdays,
         allowed_periods=allowed_periods,
-    ))
-
-    # --- Validate cover ---
-    cover_validation_path = run_dir / "template_cover_v1_validation_report.json"
-    cover_validation = _step(steps, "validate_template_cover", lambda: validate_cover(
-        cover_path=cover_path, report_path=cover_validation_path,
     ))
 
     # --- Export DB draft ---
@@ -199,8 +193,8 @@ def run_pipeline(
             "allowed_weekdays": sorted(allowed_weekdays) if allowed_weekdays else None,
             "allowed_periods": sorted(allowed_periods) if allowed_periods else None,
             "total_weeks": total_weeks,
+            "phase_weeks": list(resolved_phase_weeks),
             "top_k": top_k,
-            "max_templates": max_templates,
             "train_model": train_model,
             "model_rounds": model_rounds,
             "import_db": import_db,
@@ -220,7 +214,12 @@ def run_pipeline(
                 "completed_task_count": cover_report.get("completed_task_count"),
                 "remaining_task_count": cover_report.get("remaining_task_count"),
                 "template_count": cover_report.get("template_count"),
-                "validation_issue_count": cover_validation.get("issue_count"),
+                "phase_weeks": cover_report.get("phase_weeks"),
+                "merged_section_count": cover_report.get("merged_section_count"),
+                "model_hit_rate": cover_report.get("model_hit_rate"),
+                "conflicts": cover_report.get("conflicts"),
+                "conservation_mismatch": cover_report.get("conservation_mismatch"),
+                "validation_issue_count": cover_report.get("validation_issue_count"),
             },
             "db_draft": {
                 "counts": export_report.get("counts", {}),
@@ -243,6 +242,12 @@ def run_pipeline(
     return summary
 
 
+def _default_phase_weeks(total_weeks: int) -> tuple[int, int]:
+    """默认二段切分: 18 周 → (8, 10); 其余按前段不超过 8 周切."""
+    first = min(8, max(1, total_weeks - 1))
+    return first, total_weeks - first
+
+
 def _step(steps: list[dict[str, Any]], name: str, fn: Callable[[], Any]) -> Any:
     start = time.time()
     result = fn()
@@ -256,7 +261,10 @@ def main() -> None:
     parser.add_argument("--allocation-task-id", type=int, default=1)
     parser.add_argument("--total-weeks", type=int, default=18)
     parser.add_argument("--top-k", type=int, default=300)
-    parser.add_argument("--max-templates", type=int, default=8)
+    parser.add_argument("--max-templates", type=int, default=8,
+                        help="已废弃: phase 引擎固定两段, 保留只为兼容旧调用方")
+    parser.add_argument("--phase-weeks", default=None,
+                        help="周段预算, 逗号分隔 (默认按 total-weeks 切成 8,10)")
     parser.add_argument("--train-model", action="store_true")
     parser.add_argument("--model-rounds", type=int, default=160)
     parser.add_argument("--import-db", action="store_true")
@@ -264,12 +272,17 @@ def main() -> None:
     args = parser.parse_args()
     if args.truncate_db and not args.import_db:
         raise SystemExit("--truncate-db requires --import-db")
+    phase_weeks = (
+        tuple(int(x) for x in args.phase_weeks.split(",") if x.strip())
+        if args.phase_weeks else None
+    )
 
     summary = run_pipeline(
         allocation_task_id=args.allocation_task_id,
         total_weeks=args.total_weeks,
         top_k=args.top_k,
         max_templates=args.max_templates,
+        phase_weeks=phase_weeks,
         train_model=args.train_model,
         model_rounds=args.model_rounds,
         import_db=args.import_db,

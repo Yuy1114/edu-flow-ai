@@ -42,7 +42,8 @@ INSERT_COLUMNS = {
         "template_id", "template_code", "allocation_task_id", "generation_run_id", "fragment_code",
         "teaching_task_id", "source_key", "course_id", "course_name", "teacher_id", "teacher_name",
         "class_group_id", "class_name", "classroom_id", "classroom_name", "day_of_week", "period_index",
-        "consecutive_slots", "required_room_type", "source_type", "lock_status", "score", "candidate_rank",
+        "consecutive_slots", "duration_weeks", "session_hours", "required_room_type",
+        "source_type", "lock_status", "score", "candidate_rank",
     ],
     "schedule_template_fragment_slot": [
         "template_fragment_id", "fragment_code", "template_id", "template_code", "allocation_task_id", "generation_run_id",
