@@ -9,6 +9,8 @@
         <result property="assistantTeacherId" column="assistant_teacher_id"/>
         <result property="classroomId" column="classroom_id"/>
         <result property="totalHours" column="total_hours"/>
+        <result property="sessionsPerWeek" column="sessions_per_week"/>
+        <result property="durationWeeks" column="duration_weeks"/>
         <result property="requiredRoomType" column="required_room_type"/>
         <result property="taskBatch" column="task_batch"/>
         <result property="notes" column="notes"/>
@@ -44,7 +46,7 @@
     <sql id="teachingTaskJoin">
         SELECT t.id, t.course_id, t.primary_teacher_id, t.assistant_teacher_id,
                t.classroom_id,
-               t.total_hours, t.required_room_type, t.task_batch, t.notes, t.status,
+               t.total_hours, t.sessions_per_week, t.duration_weeks, t.required_room_type, t.task_batch, t.notes, t.status,
                t.created_at, t.updated_at,
                c.id AS course_id2, c.name AS course_name,
                c.course_type, c.required_room_type AS course_required_room_type,

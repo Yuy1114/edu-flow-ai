@@ -17,6 +17,8 @@ public class TeachingTask {
     private Long assistantTeacherId;
     private Long classroomId;
     private Integer totalHours;
+    private Integer sessionsPerWeek;
+    private Integer durationWeeks;
     private String requiredRoomType;
     private String taskBatch;
     private String notes;

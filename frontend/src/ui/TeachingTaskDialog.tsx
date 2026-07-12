@@ -48,6 +48,8 @@ export default function TeachingTaskDialog({ form, onChange, saving, onSave, onC
             </select>
           </div>
           <div><label className="label pb-1"><span className="label-text">总课时</span></label><input type="number" className="input input-bordered w-full" value={form.totalHours} min={2} step={2} onChange={e => onChange({...form, totalHours: Number(e.target.value)})} /><span className="text-xs text-base-content/40 mt-1">必须是2的倍数</span></div>
+          <div><label className="label pb-1"><span className="label-text">每周次数（可选）</span></label><input type="number" className="input input-bordered w-full" value={form.sessionsPerWeek ?? ""} min={1} placeholder="不填由系统推算" onChange={e => onChange({...form, sessionsPerWeek: e.target.value === "" ? "" : Number(e.target.value)})} /></div>
+          <div><label className="label pb-1"><span className="label-text">持续周数（可选）</span></label><input type="number" className="input input-bordered w-full" value={form.durationWeeks ?? ""} min={1} placeholder="不填由系统推算" onChange={e => onChange({...form, durationWeeks: e.target.value === "" ? "" : Number(e.target.value)})} /><span className="text-xs text-base-content/40 mt-1">次数×周数×每次课时须等于总课时</span></div>
           <div>
             <label className="label pb-1"><span className="label-text">推荐教室</span></label>
             <select className="select select-bordered w-full" value={form.classroomId || ""} onChange={e => onChange({...form, classroomId: e.target.value ? Number(e.target.value) : undefined})}>

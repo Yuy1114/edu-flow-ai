@@ -8,6 +8,8 @@ public record TeachingTaskRequest(
         Long assistantTeacherId,
         Long classroomId,
         Integer totalHours,
+        Integer sessionsPerWeek,
+        Integer durationWeeks,
         String requiredRoomType,
         String taskBatch,
         String notes,

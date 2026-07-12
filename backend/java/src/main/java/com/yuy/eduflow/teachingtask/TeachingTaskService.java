@@ -7,6 +7,7 @@ import com.yuy.eduflow.classroom.ClassroomService;
 import com.yuy.eduflow.common.Assert;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
+import com.yuy.eduflow.course.Course;
 import com.yuy.eduflow.course.CourseService;
 import com.yuy.eduflow.enums.ActiveStatus;
 import com.yuy.eduflow.teacher.TeacherService;
@@ -156,6 +157,8 @@ public class TeachingTaskService {
         task.setAssistantTeacherId(request.assistantTeacherId());
         task.setClassroomId(request.classroomId());
         task.setTotalHours(request.totalHours());
+        task.setSessionsPerWeek(request.sessionsPerWeek());
+        task.setDurationWeeks(request.durationWeeks());
         task.setRequiredRoomType(request.requiredRoomType());
         task.setTaskBatch(request.taskBatch() != null && !request.taskBatch().isBlank() ? request.taskBatch().trim() : "DEFAULT");
         task.setNotes(request.notes());
@@ -181,17 +184,34 @@ public class TeachingTaskService {
             throw new ValidationException("总课时必须是2的倍数（MVP 固定使用2课时时间块）");
         }
 
-        // 班级校验：MVP 阶段限制最多 2 个班级合班上课
+        // 班级校验：合班上课不限班级数，冲突/教室容量由排课引擎按整体任务约束
         if (request.classGroupIds() == null || request.classGroupIds().isEmpty()) {
             throw new ValidationException("班级不能为空，至少需要关联1个班级");
         }
-        if (request.classGroupIds().size() > 2) {
-            throw new ValidationException("MVP 中每个教学任务最多关联2个班级");
-        }
 
         // 级联校验：通过各模块 Service 检查 ID 是否在数据库中真实存在
-        courseService.findById(request.courseId());
+        Course course = courseService.findById(request.courseId());
         teacherService.findById(request.primaryTeacherId());
+
+        // 课时排布校验（可选字段，填了就必须自洽）:
+        // 每周次数 × 持续周数 × 每次课时 == 总课时 (理论课每次2课时, 上机课连堂4课时)
+        Integer sessions = request.sessionsPerWeek();
+        Integer weeks = request.durationWeeks();
+        if ((sessions == null) != (weeks == null)) {
+            throw new ValidationException("课时排布需同时填写每周次数和持续周数，或都不填由系统推算");
+        }
+        if (sessions != null) {
+            if (sessions <= 0 || weeks <= 0) {
+                throw new ValidationException("每周次数和持续周数必须大于0");
+            }
+            int sessionHours = "上机课".equals(course.getCourseType()) ? 4 : 2;
+            int expected = sessions * weeks * sessionHours;
+            if (expected != request.totalHours()) {
+                throw new ValidationException(String.format(
+                    "课时排布不自洽：每周%d次 × %d周 × 每次%d课时 = %d，与总课时 %d 不符",
+                    sessions, weeks, sessionHours, expected, request.totalHours()));
+            }
+        }
 
         // 教室容量校验（仅当绑定了固定教室时）
         if (request.classroomId() != null) {

@@ -18,6 +18,8 @@ export interface TeachingTask {
   classroomId?: number | "";
   classGroupIds: number[];
   totalHours: number;
+  sessionsPerWeek?: number | "";
+  durationWeeks?: number | "";
   notes?: string;
   status: string;
   course?: Course;
@@ -36,7 +38,7 @@ const courseTypeOptions = [
 const emptyForm: TeachingTask = {
   id: null, courseId: "", courseType: "理论课", requiredRoomType: "普通教室", taskBatch: "DEFAULT",
   primaryTeacherId: "", assistantTeacherId: "", classroomId: "",
-  classGroupIds: [], totalHours: 32, notes: "", status: "ACTIVE",
+  classGroupIds: [], totalHours: 32, sessionsPerWeek: "", durationWeeks: "", notes: "", status: "ACTIVE",
 };
 
 export function useTeachingTasks() {
@@ -132,6 +134,8 @@ export function useTeachingTasks() {
         classroomId: row.classroomId ?? "",
         classGroupIds: row.classGroups?.map(cg => cg.id) ?? row.classGroupIds ?? [],
         totalHours: row.totalHours || 32,
+        sessionsPerWeek: row.sessionsPerWeek ?? "",
+        durationWeeks: row.durationWeeks ?? "",
         notes: row.notes || "",
         status: row.status || "ACTIVE",
       });
@@ -147,11 +151,16 @@ export function useTeachingTasks() {
     setSaving(true);
     try {
       const roomMap: Record<string, string> = { "理论课": "普通教室", "上机课": "机房", "实践课": "" };
+      const payload = {
+        ...form,
+        sessionsPerWeek: form.sessionsPerWeek === "" ? null : form.sessionsPerWeek,
+        durationWeeks: form.durationWeeks === "" ? null : form.durationWeeks,
+      };
       if (form.id) {
-        await request.put(`/api/teaching-tasks/${form.id}`, form);
+        await request.put(`/api/teaching-tasks/${form.id}`, payload);
       } else {
         await request.post("/api/teaching-tasks", {
-          ...form,
+          ...payload,
           requiredRoomType: roomMap[form.courseType] || "",
         });
       }

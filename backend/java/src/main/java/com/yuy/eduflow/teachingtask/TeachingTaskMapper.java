@@ -52,11 +52,11 @@ public interface TeachingTaskMapper {
     @Insert("""
             INSERT INTO teaching_task (
                 course_id, primary_teacher_id, assistant_teacher_id, classroom_id,
-                total_hours, required_room_type, task_batch, notes, status
+                total_hours, sessions_per_week, duration_weeks, required_room_type, task_batch, notes, status
             )
             VALUES (
                 #{courseId}, #{primaryTeacherId}, #{assistantTeacherId}, #{classroomId},
-                #{totalHours}, #{requiredRoomType}, #{taskBatch}, #{notes}, #{status}
+                #{totalHours}, #{sessionsPerWeek}, #{durationWeeks}, #{requiredRoomType}, #{taskBatch}, #{notes}, #{status}
             )
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
@@ -69,6 +69,8 @@ public interface TeachingTaskMapper {
                 assistant_teacher_id = #{assistantTeacherId},
                 classroom_id = #{classroomId},
                 total_hours = #{totalHours},
+                sessions_per_week = #{sessionsPerWeek},
+                duration_weeks = #{durationWeeks},
                 required_room_type = #{requiredRoomType},
                 task_batch = #{taskBatch},
                 notes = #{notes},

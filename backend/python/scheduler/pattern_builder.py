@@ -79,7 +79,12 @@ def _build_pattern(source_key: str, rows: list[dict[str, Any]]) -> dict[str, Any
     observed_slot_units = sum(max(1, len(_parse_weeks(row.get("observed_weeks")))) for row in rows)
     consecutive_slots = _consecutive_slots(course_type, required_room_type)
 
-    if total_hours > 0:
+    explicit_sessions = _safe_int(first.get("sessions_per_week"))
+    explicit_weeks = _safe_int(first.get("duration_weeks"))
+    if explicit_sessions > 0 and explicit_weeks > 0:
+        # 教学任务显式指定的课时排布优先; 入库关卡已校验 次数×周数×每次课时==总课时
+        weekly_slot_count, duration_weeks, source = explicit_sessions, explicit_weeks, "explicit"
+    elif total_hours > 0:
         weekly_slot_count, duration_weeks, source = _pattern_from_hours(total_hours, course_type, required_room_type)
     else:
         duration_weeks = max(1, len(observed_weeks))

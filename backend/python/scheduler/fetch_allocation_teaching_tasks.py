@@ -36,6 +36,8 @@ def fetch(allocation_task_id: int, output_path: Path = DEFAULT_OUTPUT_PATH) -> d
                     COALESCE(SUM(cg.student_count), 0) AS student_count,
                     COUNT(DISTINCT cg.id) AS class_group_count,
                     tt.total_hours,
+                    tt.sessions_per_week,
+                    tt.duration_weeks,
                     tt.required_room_type
                 FROM allocation_task_teaching_task att
                 JOIN teaching_task tt ON tt.id = att.teaching_task_id AND tt.status = 'ACTIVE'
@@ -46,7 +48,7 @@ def fetch(allocation_task_id: int, output_path: Path = DEFAULT_OUTPUT_PATH) -> d
                 WHERE att.allocation_task_id = %s
                   AND (tt.notes IS NULL OR tt.notes NOT LIKE 'unschedulable:%%')
                 GROUP BY
-                    tt.id, c.code, c.name, c.course_type, t.name, tt.total_hours, tt.required_room_type
+                    tt.id, c.code, c.name, c.course_type, t.name, tt.total_hours, tt.sessions_per_week, tt.duration_weeks, tt.required_room_type
                 ORDER BY c.code, class_names
             """, (allocation_task_id,))
 
@@ -72,6 +74,8 @@ def fetch(allocation_task_id: int, output_path: Path = DEFAULT_OUTPUT_PATH) -> d
                     "class_grade": str(r["class_grade"] or ""),
                     "student_count": r["student_count"] or 0,
                     "total_hours": r["total_hours"] or 0,
+                    "sessions_per_week": r["sessions_per_week"],
+                    "duration_weeks": r["duration_weeks"],
                     "course_type": r["course_type"],
                     "required_room_type": r["required_room_type"] or "",
                     "teaching_task_id": r["teaching_task_id"],
