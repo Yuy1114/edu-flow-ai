@@ -123,7 +123,8 @@ public class ModelHistoryTrainingService {
         Path rawDirPath = resolveRawDir(rawDir);
         List<String> command = new ArrayList<>();
         command.add(resolvePython().toString());
-        command.add("v3.5/train_from_history.py");
+        command.add("-m");
+        command.add("ingest.train_from_history");
         command.add("--raw-dir");
         command.add(rawDirPath.toAbsolutePath().toString());
         command.add("--record-db");

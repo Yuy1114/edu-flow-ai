@@ -20,6 +20,21 @@ interface TrainingLog {
   status: string; message?: string; createdAt: string;
 }
 
+interface HistoryDatasetResult {
+  quality: string;
+  table: string;
+  path: string;
+  columns: string[];
+  rows: Record<string, string>[];
+  page: number;
+  size: number;
+  total: number;
+  rawTotal: number;
+  summary: Record<string, number>;
+  sortOptions: string[];
+  semesters: string[];
+}
+
 const EVENT_LABEL: Record<string, string> = {
   SCHEME_CONFIRMED: "方案确认", ITEM_MOVED: "片段移动",
   ITEM_MARKED_GOOD: "人工标好", ITEM_MARKED_BAD: "人工标差",
@@ -38,6 +53,18 @@ export function useModelTraining() {
   const historyEventSourceRef = useRef<EventSource | null>(null);
   const [trainingLogs, setTrainingLogs] = useState<TrainingLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [datasetLoading, setDatasetLoading] = useState(false);
+  const [dataset, setDataset] = useState<HistoryDatasetResult | null>(null);
+  const [datasetQuality, setDatasetQuality] = useState("accepted");
+  const [datasetTable, setDatasetTable] = useState("teaching_tasks");
+  const [datasetKeyword, setDatasetKeyword] = useState("");
+  const [datasetSemester, setDatasetSemester] = useState("");
+  const [datasetSortBy, setDatasetSortBy] = useState("total_hours");
+  const [datasetSortDir, setDatasetSortDir] = useState("desc");
+  const [datasetMinHours, setDatasetMinHours] = useState("");
+  const [datasetMaxHours, setDatasetMaxHours] = useState("");
+  const [datasetPage, setDatasetPage] = useState(1);
+  const datasetSize = 50;
 
   useEffect(() => {
     loadAll();
@@ -45,7 +72,7 @@ export function useModelTraining() {
   }, []);
 
   async function loadAll() {
-    await Promise.all([loadLatestFeedback(), loadEventSummary(), loadTrainingLogs()]);
+    await Promise.all([loadLatestFeedback(), loadEventSummary(), loadTrainingLogs(), loadHistoryDataset()]);
   }
 
   async function loadLatestFeedback(taskId?: string) {
@@ -149,6 +176,64 @@ export function useModelTraining() {
     finally { setLogsLoading(false); }
   }
 
+  async function loadHistoryDataset(overrides: Partial<{
+    quality: string; table: string; keyword: string; semester: string; sortBy: string;
+    sortDir: string; minHours: string; maxHours: string; page: number;
+  }> = {}) {
+    setDatasetLoading(true);
+    const quality = overrides.quality ?? datasetQuality;
+    const table = overrides.table ?? datasetTable;
+    const keyword = overrides.keyword ?? datasetKeyword;
+    const semester = overrides.semester ?? datasetSemester;
+    const sortBy = overrides.sortBy ?? datasetSortBy;
+    const sortDir = overrides.sortDir ?? datasetSortDir;
+    const minHours = overrides.minHours ?? datasetMinHours;
+    const maxHours = overrides.maxHours ?? datasetMaxHours;
+    const page = overrides.page ?? datasetPage;
+    const params = new URLSearchParams({
+      quality,
+      table,
+      sortDir,
+      page: String(page),
+      size: String(datasetSize),
+    });
+    if (keyword.trim()) params.set("keyword", keyword.trim());
+    if (semester) params.set("semester", semester);
+    if (sortBy) params.set("sortBy", sortBy);
+    if (minHours) params.set("minHours", minHours);
+    if (maxHours) params.set("maxHours", maxHours);
+    try {
+      setDataset(await request.get(`/api/ml/feedback/history-dataset/samples?${params.toString()}`));
+    } catch {
+      setDataset(null);
+    } finally {
+      setDatasetLoading(false);
+    }
+  }
+
+  function updateDatasetFilter(next: Partial<{
+    quality: string; table: string; keyword: string; semester: string; sortBy: string;
+    sortDir: string; minHours: string; maxHours: string; page: number;
+  }>) {
+    const tableChanged = next.table && next.table !== datasetTable;
+    const nextPage = next.page ?? 1;
+    const nextSortBy = next.sortBy ?? (tableChanged ? defaultSortForTable(next.table!) : datasetSortBy);
+    if (next.quality !== undefined) setDatasetQuality(next.quality);
+    if (next.table !== undefined) setDatasetTable(next.table);
+    if (next.keyword !== undefined) setDatasetKeyword(next.keyword);
+    if (next.semester !== undefined) setDatasetSemester(next.semester);
+    if (next.sortBy !== undefined || tableChanged) setDatasetSortBy(nextSortBy);
+    if (next.sortDir !== undefined) setDatasetSortDir(next.sortDir);
+    if (next.minHours !== undefined) setDatasetMinHours(next.minHours);
+    if (next.maxHours !== undefined) setDatasetMaxHours(next.maxHours);
+    setDatasetPage(nextPage);
+    loadHistoryDataset({ ...next, page: nextPage, sortBy: nextSortBy });
+  }
+
+  function defaultSortForTable(table: string) {
+    return ({ teaching_tasks: "total_hours", courses: "required_hours", timetable_occurrences: "week_index", class_groups: "student_count", teachers: "teacher_name", classrooms: "classroom_name" } as Record<string, string>)[table] || "";
+  }
+
   const lastLog = trainingLogs[0];
   const positiveRate = lastLog ? Math.round(((lastLog.positiveCount || 0) / (lastLog.sampleCount || 1)) * 100) : 0;
 
@@ -163,5 +248,5 @@ export function useModelTraining() {
   function typeLabel(type: string) { return ({ INITIAL: "初始训练", FEEDBACK: "反馈重训", FULL: "全量训练", HISTORY: "历史数据训练" } as any)[type] || type || "-"; }
   function fmtTime(t: string) { return t ? t.replace("T", " ").substring(0, 19) : "-"; }
 
-  return { feedbackStats, feedbackLoading, eventSummary, eventLoading, training, historyTraining, trainResult, historyTrainResult, historyTrainingLogs, trainingLogs, logsLoading, lastLog, positiveRate, eventCards, eventLabel, typeLabel, fmtTime, loadAll, loadLatestFeedback, loadEventSummary, generateFeedback, triggerRetrain, trainFromHistory, loadTrainingLogs };
+  return { feedbackStats, feedbackLoading, eventSummary, eventLoading, training, historyTraining, trainResult, historyTrainResult, historyTrainingLogs, trainingLogs, logsLoading, datasetLoading, dataset, datasetQuality, datasetTable, datasetKeyword, setDatasetKeyword, datasetSemester, datasetSortBy, datasetSortDir, datasetMinHours, datasetMaxHours, datasetPage, datasetSize, lastLog, positiveRate, eventCards, eventLabel, typeLabel, fmtTime, loadAll, loadLatestFeedback, loadEventSummary, generateFeedback, triggerRetrain, trainFromHistory, loadTrainingLogs, loadHistoryDataset, updateDatasetFilter };
 }

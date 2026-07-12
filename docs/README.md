@@ -11,7 +11,7 @@
 docs/
 ├── README.md                                    ← 本文件
 ├── architecture/                                ← 架构设计
-│   ├── 17-V3-CP-SAT排课架构设计.md               ← ★ 当前排课架构 (V3)
+│   ├── 22-V3.5-模板化排课落库设计.md             ← ★ 当前排课架构 (V3.5 周模板)
 │   ├── 18-V3-教师画像MVP设计.md                  ← 教师画像分析层 ★
 │   ├── 03-LightGBM模型训练架构设计.md
 │   ├── 04-训练样本事件采集架构设计.md
@@ -60,9 +60,10 @@ docs/
 |------|------|------|
 | **architecture/19-毕设最终系统架构设计.md** | ★ 毕设最终形态：导入 → 排课 → 反馈训练 → 多角色导出 | ✅ 当前总纲 |
 | **architecture/20-教师画像反馈信号接入点设计.md** | ★ 教师画像 Phase 2：反馈事件接入点与画像聚合方案 | ✅ 设计完成 |
-| **architecture/21-教师画像进入CP-SAT接入点设计.md** | ★ 教师画像 Phase 3：task plan 分数与 CP-SAT objective 接入点 | ✅ 设计完成 |
-| **architecture/17-V3-CP-SAT排课架构设计.md** | ★ 当前架构：Placement Model + CP-SAT 全局方案选择 | ✅ 生产 |
+| **architecture/22-V3.5-模板化排课落库设计.md** | ★ 当前架构：周模板排课 + 模板化落库（分段/周段能力开发中） | ✅ 当前 |
 | **architecture/18-V3-教师画像MVP设计.md** | ★ V3 教师画像：历史课表画像提取 + 课表满足度分析 | ✅ MVP |
+| archive/17-V3-CP-SAT排课架构设计.md | V3：Placement Model + CP-SAT 全局方案选择（代码已删除） | 📦 已归档 |
+| archive/21-教师画像进入CP-SAT接入点设计.md | 教师画像进 CP-SAT objective（随 V3 归档） | 📦 已归档 |
 | architecture/03-LightGBM模型训练架构设计.md | 训练闭环设计（规则冷启动→反馈重训），V3 placement model 的训练方法论 | ⚠️ 需更新 |
 | architecture/04-训练样本事件采集架构设计.md | 事件表、行为快照、调整相消、人工标注 | ⚠️ 需更新 |
 | architecture/05-模型训练数据链路设计.md | 真实课表→片段级样本→标签权重→sigmoid归一化 | ⚠️ 需更新 |
@@ -87,21 +88,20 @@ docs/
 ## 当前架构边界
 
 ```text
-核心思路: Placement Model 生成候选 → CP-SAT 全局无冲突选择
+核心思路: 周模板 + 分段(周段) — 模板内部无冲突, week→template 映射保证课时守恒
 
 输入接口: Java 仅传 allocation_task_id
-候选粒度: 每个 teaching_task 的完整 task plan (教室 + day/period + 周次分布)
-求解方式: OR-Tools CP-SAT 约束求解 (硬约束建模, 软目标优化)
-多方案:   scheme_count 个独立求解 (互不重复)
-输出:     schemes.jsonl → Java 入库 → 冲突检测 → 前端展示
+决策粒度: 每个 teaching_task 按 pattern (每周频次×持续周数) 分进周段模板, 占 (day, period, 教室) 格子
+求解方式: 分段装箱 + 段内贪心放格 (模型分数作软偏好) + 局部搬迁修复
+落库:     schedule_template / _week / _fragment / _fragment_slot 四表, 换周只改 week 映射
+输出:     模板落库 → 前端按周展开展示
 
-模型:     LightGBM 多分类 (3953 类, 13 特征)
-训练数据: 从真实课表提取 (11,443 样本)
-数据规模: 2615 teaching tasks, 330 classrooms, 673 courses, 624 teachers
+模型:     LightGBM 单模型 (V3.5 placement_single, 软偏好打分)
+数据规模: 2701 teaching tasks, 353 classrooms
 ```
 
-正式链路：`allocation_task_id` → Python 加载 DB 数据 → Placement Model TopK 推理 →
-Task Plans 模板生成 → CP-SAT 全局方案选择 → `schemes.jsonl` 输出 →
-Java 入库 → 冲突检测 → 前端 SSE 展示。
+正式链路：`allocation_task_id` → Java `V35TemplateGenerationService` → `python -m scheduler.run_pipeline` →
+pattern 构建 → 模板构建 → DB draft 校验 → 四表入库 → 前端周视图展示。
+Python 侧代码布局见 `backend/python/README.md`（scheduler = 排课引擎，ingest = 导入与训练闭环）。
 
-总体方向优先看 `docs/architecture/19-毕设最终系统架构设计.md`。实现细节看 `docs/architecture/17-V3-*` 和 `docs/architecture/18-V3-*`，`docs/archive/` 为 V1/V2 历史参考。
+总体方向优先看 `docs/architecture/19-毕设最终系统架构设计.md`。实现细节看 `docs/architecture/22-V3.5-*` 和 `docs/architecture/18-V3-*`，`docs/archive/` 为 V1/V2/V3 历史参考（V3 CP-SAT 链路代码已于 2026-07 删除，见 archive/17）。

@@ -243,7 +243,8 @@ public class ImportReviewService {
 
         List<String> command = new ArrayList<>();
         command.add(python.toString());
-        command.add("v3.5/batch_process_schedule_imports.py");
+        command.add("-m");
+        command.add("ingest.batch_process_schedule_imports");
         command.add("--input-dir");
         command.add(rawDirPath.toAbsolutePath().toString());
         command.add("--task-batch");
@@ -303,7 +304,8 @@ public class ImportReviewService {
         Path python = resolvePython(pythonRoot);
         List<String> command = new ArrayList<>();
         command.add(python.toString());
-        command.add("v3.5/apply_import_review.py");
+        command.add("-m");
+        command.add("ingest.apply_import_review");
         command.add("--input-dir");
         command.add(pythonRoot.relativize(importDir).toString());
         if (execute) {

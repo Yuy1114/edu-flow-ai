@@ -19,7 +19,7 @@ public class V35TemplateGenerationService {
 
 	private static final Path PROJECT_DIR = Paths.get(System.getProperty("user.dir")).getParent();
 	private static final Path PYTHON_VENV = PROJECT_DIR.resolve("python/.venv/bin/python");
-	private static final Path PYTHON_SCRIPT = PROJECT_DIR.resolve("python/v3.5/run_pipeline.py");
+	private static final String PYTHON_MODULE = "scheduler.run_pipeline";
 
 	private final ConcurrentHashMap<Long, V35TemplateGenerationStatus> statusMap = new ConcurrentHashMap<>();
 	private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -76,7 +76,8 @@ public class V35TemplateGenerationService {
 	) throws Exception {
 		List<String> cmd = new ArrayList<>();
 		cmd.add(PYTHON_VENV.toString());
-		cmd.add(PYTHON_SCRIPT.toString());
+		cmd.add("-m");
+		cmd.add(PYTHON_MODULE);
 		cmd.add("--allocation-task-id");
 		cmd.add(String.valueOf(allocationTaskId));
 		cmd.add("--total-weeks");

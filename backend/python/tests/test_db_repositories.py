@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from python.db.repositories import ensure_default_time_slots
+from app.db.repositories import ensure_default_time_slots
 
 
 class FakeCursor:
