@@ -77,6 +77,33 @@ public class MlFeedbackTrainingController {
         return ApiResponse.success(feedbackTrainingService.getLatestTrainingLog());
     }
 
+    @GetMapping("/history-dataset/samples")
+    public ApiResponse<Map<String, Object>> historyDatasetSamples(
+        @RequestParam(defaultValue = "accepted") String quality,
+        @RequestParam(defaultValue = "teaching_tasks") String table,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(required = false) String semester,
+        @RequestParam(required = false) String sortBy,
+        @RequestParam(defaultValue = "desc") String sortDir,
+        @RequestParam(required = false) Integer minHours,
+        @RequestParam(required = false) Integer maxHours,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "50") int size
+    ) {
+        return ApiResponse.success(modelHistoryTrainingService.historyDatasetSamples(
+            quality,
+            table,
+            keyword,
+            semester,
+            sortBy,
+            sortDir,
+            minHours,
+            maxHours,
+            page,
+            size
+        ));
+    }
+
     @GetMapping("/events/summary")
     public ApiResponse<MlFeedbackEventSummary> eventSummary(
         @RequestParam(required = false) Long taskId,
