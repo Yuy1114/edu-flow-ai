@@ -1,23 +1,12 @@
 package com.yuy.eduflow.allocation;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yuy.eduflow.common.ApiResponse;
+import com.yuy.eduflow.common.exception.ValidationException;
 import com.yuy.eduflow.conflict.ConflictDiagnosis;
 import com.yuy.eduflow.ml.MlFeedbackEvent;
 import com.yuy.eduflow.ml.MlFeedbackEventMarkRequest;
 import com.yuy.eduflow.ml.MlFeedbackEventService;
-import com.yuy.eduflow.teachingtask.TeachingTask;
-import com.yuy.eduflow.teachingtask.TeachingTaskMapper;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,15 +20,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/allocation-schemes")
 public class AllocationSchemeController {
-		private final AllocationSchemeService allocationSchemeService;
+	private final AllocationSchemeService allocationSchemeService;
 	private final AllocationItemService allocationItemService;
 	private final AllocationSchemeConfirmService allocationSchemeConfirmService;
 	private final AllocationItemAdjustmentLogMapper adjustmentLogMapper;
 	private final MlFeedbackEventService feedbackEventService;
-	private final AllocationTaskService allocationTaskService;
-	private final AllocationTemplateMapper allocationTemplateMapper;
-	private final TeachingTaskMapper teachingTaskMapper;
-	private final ObjectMapper objectMapper = new ObjectMapper();
+	private final AllocationTemplateDraftService allocationTemplateDraftService;
 
 	public AllocationSchemeController(
 		AllocationSchemeService allocationSchemeService,
@@ -47,18 +33,14 @@ public class AllocationSchemeController {
 		AllocationSchemeConfirmService allocationSchemeConfirmService,
 		AllocationItemAdjustmentLogMapper adjustmentLogMapper,
 		MlFeedbackEventService feedbackEventService,
-		AllocationTaskService allocationTaskService,
-		AllocationTemplateMapper allocationTemplateMapper,
-		TeachingTaskMapper teachingTaskMapper
+		AllocationTemplateDraftService allocationTemplateDraftService
 	) {
 		this.allocationSchemeService = allocationSchemeService;
 		this.allocationItemService = allocationItemService;
 		this.allocationSchemeConfirmService = allocationSchemeConfirmService;
 		this.adjustmentLogMapper = adjustmentLogMapper;
 		this.feedbackEventService = feedbackEventService;
-		this.allocationTaskService = allocationTaskService;
-		this.allocationTemplateMapper = allocationTemplateMapper;
-		this.teachingTaskMapper = teachingTaskMapper;
+		this.allocationTemplateDraftService = allocationTemplateDraftService;
 	}
 
 	@GetMapping
@@ -79,7 +61,7 @@ public class AllocationSchemeController {
 		AllocationScheme scheme = allocationSchemeService.findById(id);
 		String modelVersion = scheme.getModelVersion();
 		if (modelVersion != null && modelVersion.startsWith("v3.5")) {
-			return ApiResponse.success(findV35Items(scheme));
+			return ApiResponse.success(allocationTemplateDraftService.findSchemeItems(id));
 		}
 		return ApiResponse.success(allocationItemService.findViewsBySchemeId(id));
 	}
@@ -102,7 +84,51 @@ public class AllocationSchemeController {
 
 	@PostMapping("/{id}/reevaluate")
 	public ApiResponse<AllocationScheme> reevaluate(@PathVariable Long id) {
+		AllocationScheme scheme = allocationSchemeService.findById(id);
+		if (allocationTemplateDraftService.isV35(scheme)) {
+			allocationTemplateDraftService.auditAndPersist(id);
+			return ApiResponse.success(allocationSchemeService.findById(id));
+		}
 		return ApiResponse.success(allocationItemService.reevaluateScheme(id));
+	}
+
+	@GetMapping("/{id}/template-draft")
+	public ApiResponse<AllocationTemplateDraftView> findTemplateDraft(@PathVariable Long id) {
+		return ApiResponse.success(allocationTemplateDraftService.findDraft(id));
+	}
+
+	@PostMapping("/{id}/template-fragments")
+	public ApiResponse<AllocationTemplateDraftView> createTemplateFragment(
+		@PathVariable Long id,
+		@RequestBody AllocationTemplateFragmentRequest request
+	) {
+		return ApiResponse.success(allocationTemplateDraftService.createFragment(id, request));
+	}
+
+	@PutMapping("/{id}/template-fragments/{fragmentId}")
+	public ApiResponse<AllocationTemplateDraftView> updateTemplateFragment(
+		@PathVariable Long id,
+		@PathVariable Long fragmentId,
+		@RequestBody AllocationTemplateFragmentRequest request
+	) {
+		return ApiResponse.success(allocationTemplateDraftService.updateFragment(id, fragmentId, request));
+	}
+
+	@DeleteMapping("/{id}/template-fragments/{fragmentId}")
+	public ApiResponse<AllocationTemplateDraftView> deleteTemplateFragment(
+		@PathVariable Long id,
+		@PathVariable Long fragmentId,
+		@RequestParam(required = false) String reason
+	) {
+		return ApiResponse.success(allocationTemplateDraftService.deleteFragment(id, fragmentId, reason));
+	}
+
+	@PostMapping("/{id}/manual-review-acceptance")
+	public ApiResponse<AllocationTemplateDraftView> acceptTemplateManualReview(
+		@PathVariable Long id,
+		@RequestBody AllocationTemplateManualReviewRequest request
+	) {
+		return ApiResponse.success(allocationTemplateDraftService.acceptManualReview(id, request));
 	}
 
 	@PutMapping("/{id}")
@@ -140,6 +166,11 @@ public class AllocationSchemeController {
 		@PathVariable Long itemId,
 		@RequestBody AllocationItemMoveRequest request
 	) {
+		AllocationScheme scheme = allocationSchemeService.findById(schemeId);
+		if (allocationTemplateDraftService.isV35(scheme)) {
+			allocationTemplateDraftService.moveFragmentFromLegacyRequest(schemeId, itemId, request);
+			return ApiResponse.success(allocationTemplateDraftService.findSchemeItems(schemeId));
+		}
 		return ApiResponse.success(allocationItemService.moveAndRecheck(schemeId, itemId, request));
 	}
 
@@ -149,127 +180,10 @@ public class AllocationSchemeController {
 		@PathVariable Long itemId,
 		@RequestBody MlFeedbackEventMarkRequest request
 	) {
+		AllocationScheme scheme = allocationSchemeService.findById(schemeId);
+		if (allocationTemplateDraftService.isV35(scheme)) {
+			throw new ValidationException("V3.5模板片段请通过草案编辑接口记录调整反馈");
+		}
 		return ApiResponse.success(feedbackEventService.markItem(schemeId, itemId, request));
-	}
-
-	private List<AllocationItemView> findV35Items(AllocationScheme scheme) {
-		Long taskId = scheme.getTaskId();
-		String generationRunId = extractGenerationRunId(scheme);
-		List<AllocationTemplateWeek> weeks = generationRunId != null && !generationRunId.isBlank()
-			? allocationTemplateMapper.findTemplateWeeksByRun(taskId, generationRunId)
-			: allocationTemplateMapper.findTemplateWeeks(taskId);
-		if (weeks.isEmpty()) return Collections.emptyList();
-
-		List<AllocationItemView> allItems = new ArrayList<>();
-		long virtualItemId = 0;
-
-		for (AllocationTemplateWeek week : weeks) {
-			List<AllocationTemplateTimetableEntry> entries = generationRunId != null && !generationRunId.isBlank()
-				? allocationTemplateMapper.findWeekTimetableByRun(taskId, generationRunId, week.getWeekNumber())
-				: allocationTemplateMapper.findWeekTimetable(taskId, week.getWeekNumber());
-			for (AllocationTemplateTimetableEntry e : entries) {
-				virtualItemId--;
-				AllocationItemView view = new AllocationItemView();
-				view.setId(virtualItemId);
-				view.setSchemeId(scheme.getId());
-				view.setTeachingTaskId(e.getTeachingTaskId());
-				view.setCourseName(e.getCourseName());
-				view.setTeacherName(e.getTeacherName() != null && !e.getTeacherName().isBlank() ? e.getTeacherName() : null);
-				view.setClassGroupName(e.getClassName());
-				view.setClassroomId(e.getClassroomId());
-				view.setClassroomName(e.getClassroomName());
-				view.setWeekNumber(e.getWeekNumber());
-				view.setDayOfWeek(e.getDayOfWeek());
-				view.setPeriodIndex(e.getPeriodIndex());
-				view.setValid(true);
-				allItems.add(view);
-			}
-		}
-		markV35Conflicts(allItems);
-		return allItems;
-	}
-
-	private void markV35Conflicts(List<AllocationItemView> items) {
-		Map<Long, List<String>> messages = new LinkedHashMap<>();
-		collectOccupancyConflicts(items, "教师冲突", AllocationItemView::getTeacherName, messages);
-		collectOccupancyConflicts(items, "班级冲突", AllocationItemView::getClassGroupName, messages);
-		collectOccupancyConflicts(items, "教室冲突", AllocationItemView::getClassroomName, messages);
-		collectTeachingTaskHourConflicts(items, messages);
-		for (AllocationItemView item : items) {
-			List<String> itemMessages = messages.get(item.getId());
-			if (itemMessages == null || itemMessages.isEmpty()) {
-				item.setValid(true);
-				item.setConflictMessage(null);
-			} else {
-				item.setValid(false);
-				item.setConflictMessage(String.join("；", itemMessages));
-			}
-		}
-	}
-
-	private void collectOccupancyConflicts(
-		List<AllocationItemView> items,
-		String label,
-		java.util.function.Function<AllocationItemView, String> resourceExtractor,
-		Map<Long, List<String>> messages
-	) {
-		Map<String, List<AllocationItemView>> buckets = new LinkedHashMap<>();
-		for (AllocationItemView item : items) {
-			String resource = resourceExtractor.apply(item);
-			if (resource == null || resource.isBlank()) continue;
-			String key = String.join("|", resource, String.valueOf(item.getWeekNumber()), String.valueOf(item.getDayOfWeek()), String.valueOf(item.getPeriodIndex()));
-			buckets.computeIfAbsent(key, ignored -> new ArrayList<>()).add(item);
-		}
-		for (List<AllocationItemView> bucket : buckets.values()) {
-			if (bucket.size() <= 1) continue;
-			AllocationItemView first = bucket.get(0);
-			String detail = "%s：%s 在第%d周 周%d 第%d节重复安排 %d 条".formatted(
-				label,
-				resourceExtractor.apply(first),
-				first.getWeekNumber(),
-				first.getDayOfWeek(),
-				first.getPeriodIndex(),
-				bucket.size()
-			);
-			for (AllocationItemView item : bucket) {
-				messages.computeIfAbsent(item.getId(), ignored -> new ArrayList<>()).add(detail);
-			}
-		}
-	}
-
-	private void collectTeachingTaskHourConflicts(List<AllocationItemView> items, Map<Long, List<String>> messages) {
-		Set<Long> taskIds = items.stream().map(AllocationItemView::getTeachingTaskId).filter(Objects::nonNull).collect(Collectors.toSet());
-		if (taskIds.isEmpty()) return;
-		String ids = taskIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-		Map<Long, Integer> expectedHours = new HashMap<>();
-		for (TeachingTask task : teachingTaskMapper.findHoursByIds(ids)) {
-			expectedHours.put(task.getId(), task.getTotalHours());
-		}
-		Map<Long, Long> actualHours = items.stream()
-			.filter(item -> item.getTeachingTaskId() != null)
-			.collect(Collectors.groupingBy(AllocationItemView::getTeachingTaskId, Collectors.counting()));
-		for (AllocationItemView item : items) {
-			Long taskId = item.getTeachingTaskId();
-			if (taskId == null || !expectedHours.containsKey(taskId)) continue;
-			int expected = expectedHours.getOrDefault(taskId, 0);
-			long actual = actualHours.getOrDefault(taskId, 0L) * 2;
-			if (expected > 0 && actual != expected) {
-				messages.computeIfAbsent(item.getId(), ignored -> new ArrayList<>()).add(
-					"课时不匹配：教学任务#%d 应排%d课时，当前展开%d课时".formatted(taskId, expected, actual)
-				);
-			}
-		}
-	}
-
-	private String extractGenerationRunId(AllocationScheme scheme) {
-		String summary = scheme.getSummary();
-		if (summary == null || summary.isBlank()) return null;
-		try {
-			Map<String, Object> data = objectMapper.readValue(summary, new TypeReference<>() {});
-			Object value = data.get("generation_run_id");
-			return value == null ? null : String.valueOf(value);
-		} catch (Exception ignored) {
-			return null;
-		}
 	}
 }

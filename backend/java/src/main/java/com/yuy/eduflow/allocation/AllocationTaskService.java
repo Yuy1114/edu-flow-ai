@@ -3,8 +3,10 @@ package com.yuy.eduflow.allocation;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
 import com.yuy.eduflow.course.Course;
+import com.yuy.eduflow.enums.TaskStatus;
 import com.yuy.eduflow.teacher.Teacher;
 import com.yuy.eduflow.teachingtask.TeachingTask;
+import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,7 +24,7 @@ public class AllocationTaskService {
 
 	private static final String DEFAULT_ALLOWED_WEEKS = "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18";
 	private static final String DEFAULT_ALLOWED_WEEKDAYS = "1,2,3,4,5";
-	private static final String DEFAULT_ALLOWED_PERIODS = "1,2,3,4";
+	private static final String DEFAULT_ALLOWED_PERIODS = SchedulingTimePolicy.DEFAULT_AUTOMATIC_PERIODS;
 
 	private final AllocationTaskMapper allocationTaskMapper;
 	private final AllocationTaskGenerationConfigMapper generationConfigMapper;
@@ -37,7 +39,11 @@ public class AllocationTaskService {
 	}
 
 	public List<AllocationTask> findAll(String keyword, String status) {
-		List<AllocationTask> tasks = allocationTaskMapper.findAll(keyword, status);
+		TaskStatus parsedStatus = TaskStatus.from(status);
+		List<AllocationTask> tasks = allocationTaskMapper.findAll(
+			keyword,
+			parsedStatus == null ? null : parsedStatus.code()
+		);
 		for (AllocationTask task : tasks) {
 			task.setTeachingTasks(loadTeachingTasks(task.getId()));
 			task.setGenerationConfig(loadGenerationConfig(task.getId()));
@@ -62,7 +68,7 @@ public class AllocationTaskService {
 
 	@Transactional
 	public AllocationTaskGenerationConfig updateGenerationConfig(Long taskId, AllocationTaskGenerationConfigRequest request) {
-		findById(taskId);
+		requireMutableTask(taskId);
 		AllocationTaskGenerationConfig config = toGenerationConfig(taskId, request);
 		AllocationTaskGenerationConfig existing = generationConfigMapper.findByTaskId(taskId);
 		if (existing == null) {
@@ -127,7 +133,7 @@ public class AllocationTaskService {
 
     @Transactional
 	public AllocationTask update(Long id, AllocationTaskRequest request) {
-		AllocationTask existing = findById(id);
+		AllocationTask existing = requireMutableTask(id);
         validateRequest(request);
 		AllocationTask task = toTask(existing, request);
 		allocationTaskMapper.update(task);
@@ -144,13 +150,20 @@ public class AllocationTaskService {
 
     @Transactional
 	public void delete(Long id) {
-		findById(id);
+		requireMutableTask(id);
 		allocationTaskMapper.deleteAdjustmentRequestsByTaskId(id);
 		allocationTaskMapper.deleteCourseAssignmentsByTaskId(id);
 		allocationTaskMapper.deleteConflictsByTaskId(id);
 		allocationTaskMapper.deleteAdjustmentLogsByTaskId(id);
 		allocationTaskMapper.deleteFeedbackByTaskId(id);
 		allocationTaskMapper.deleteItemsByTaskId(id);
+		allocationTaskMapper.deleteTemplateFragmentSlotsByTaskId(id);
+		allocationTaskMapper.deleteTemplateFragmentTeachersByTaskId(id);
+		allocationTaskMapper.deleteTemplateFragmentClassGroupsByTaskId(id);
+		allocationTaskMapper.deleteTemplateFragmentWeeksByTaskId(id);
+		allocationTaskMapper.deleteTemplateFragmentsByTaskId(id);
+		allocationTaskMapper.deleteTemplateWeeksByTaskId(id);
+		allocationTaskMapper.deleteTemplatesByTaskId(id);
 		allocationTaskMapper.deleteSchemesByTaskId(id);
         allocationTaskMapper.deleteTeachingTasks(id);
 		allocationTaskMapper.deleteById(id);
@@ -258,6 +271,9 @@ public class AllocationTaskService {
 
 	private AllocationTask toTask(AllocationTask task, AllocationTaskRequest request) {
 		task.setName(request.name());
+		if (task.getStatus() == null) {
+			task.setStatus(TaskStatus.CREATED);
+		}
 		return task;
 	}
 
@@ -273,9 +289,12 @@ public class AllocationTaskService {
 		if (config == null) {
 			return;
 		}
-		validateCsvNumbers(config.allowedWeeks(), "允许周次", 1, 18);
+		validateCsvNumbers(
+			config.allowedWeeks(), "允许周次",
+			SchedulingTimePolicy.FIRST_WEEK, SchedulingTimePolicy.LAST_WEEK
+		);
 		validateCsvNumbers(config.allowedWeekdays(), "允许星期", 1, 7);
-		validateCsvNumbers(config.allowedPeriods(), "允许节次", 1, 5);
+		validateCsvNumbers(config.allowedPeriods(), "允许节次", SchedulingTimePolicy.FIRST_PERIOD, SchedulingTimePolicy.LAST_PERIOD);
 		if (config.schemeCount() != null && (config.schemeCount() < 1 || config.schemeCount() > 20)) {
 			throw new ValidationException("候选方案数量必须在1到20之间");
 		}
@@ -325,7 +344,9 @@ public class AllocationTaskService {
 		return config;
 	}
 
+	@Transactional
 	public void toggleConstraint(Long taskId, String constraintId) {
+		requireMutableTask(taskId);
 		AllocationTaskGenerationConfig config = generationConfigMapper.findByTaskId(taskId);
 		if (config == null || config.getLlmOverrides() == null) return;
 		try {
@@ -348,7 +369,9 @@ public class AllocationTaskService {
 		}
 	}
 
+	@Transactional
 	public void deleteConstraint(Long taskId, String constraintId) {
+		requireMutableTask(taskId);
 		AllocationTaskGenerationConfig config = generationConfigMapper.findByTaskId(taskId);
 		if (config == null || config.getLlmOverrides() == null) return;
 		try {
@@ -369,5 +392,39 @@ public class AllocationTaskService {
 		} catch (JsonProcessingException e) {
 			throw new RuntimeException("Failed to parse llmOverrides JSON", e);
 		}
+	}
+
+	/**
+	 * Performs a fail-closed preflight only. Python is the authoritative job
+	 * reserver and changes the task to RUNNING in the same transaction as job insert.
+	 */
+	@Transactional
+	public void validateGenerationAllowed(Long taskId) {
+		AllocationTask task = allocationTaskMapper.findByIdForUpdate(taskId);
+		if (task == null) throw new ResourceNotFoundException("分课任务不存在");
+		boolean generatable = task.getStatus() == TaskStatus.CREATED
+			|| task.getStatus() == TaskStatus.DRAFT
+			|| task.getStatus() == TaskStatus.PENDING
+			|| task.getStatus() == TaskStatus.FAILED
+			|| task.getStatus() == TaskStatus.BLOCKED;
+		if (!generatable || allocationTaskMapper.countSchemesByTaskId(taskId) > 0) {
+			throw new ValidationException("排课任务当前不可重新生成；已有候选或已确认任务请新建排课任务");
+		}
+	}
+
+	private AllocationTask requireMutableTask(Long taskId) {
+		AllocationTask task = allocationTaskMapper.findByIdForUpdate(taskId);
+		if (task == null) throw new ResourceNotFoundException("分课任务不存在");
+		boolean mutableStatus = task.getStatus() == TaskStatus.CREATED
+			|| task.getStatus() == TaskStatus.DRAFT
+			|| task.getStatus() == TaskStatus.PENDING
+			|| task.getStatus() == TaskStatus.FAILED
+			|| task.getStatus() == TaskStatus.BLOCKED;
+		if (!mutableStatus || allocationTaskMapper.countSchemesByTaskId(taskId) > 0) {
+			throw new ValidationException(
+				"排课任务已进入生成/复核/发布生命周期，普通修改、删除或重排已禁用；请新建排课任务"
+			);
+		}
+		return task;
 	}
 }

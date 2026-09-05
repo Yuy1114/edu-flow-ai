@@ -7,6 +7,13 @@ import com.yuy.eduflow.common.exception.ValidationException;
  * 适用于：allocation_task（分课任务）。
  */
 public enum TaskStatus implements CodeEnum {
+	CREATED("CREATED", "已创建"),
+	RUNNING("RUNNING", "排课中"),
+	GENERATED("GENERATED", "已生成候选方案"),
+	NEEDS_MANUAL_REVIEW("NEEDS_MANUAL_REVIEW", "需要人工复核"),
+	BLOCKED("BLOCKED", "存在硬约束阻塞"),
+	FAILED("FAILED", "生成失败"),
+	CANCELLED("CANCELLED", "已取消"),
 	DRAFT("DRAFT", "草稿"),
 	PENDING("PENDING", "待处理"),
 	CONFIRMED("CONFIRMED", "已确认"),

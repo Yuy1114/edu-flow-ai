@@ -15,15 +15,26 @@ public interface AllocationTaskMapper {
 	List<AllocationTask> findAll(@Param("keyword") String keyword, @Param("status") String status);
 
 	@Select("""
-		SELECT id, name
+		SELECT id, name, status, created_at, updated_at
 		FROM allocation_task
 		WHERE id = #{id}
 		""")
 	AllocationTask findById(Long id);
 
+	@Select("""
+		SELECT id, name, status, created_at, updated_at
+		FROM allocation_task
+		WHERE id = #{id}
+		FOR UPDATE
+		""")
+	AllocationTask findByIdForUpdate(Long id);
+
+	@Select("SELECT COUNT(*) FROM allocation_scheme WHERE task_id = #{taskId}")
+	int countSchemesByTaskId(@Param("taskId") Long taskId);
+
 	@Insert("""
-		INSERT INTO allocation_task (name)
-		VALUES (#{name})
+		INSERT INTO allocation_task (name, status)
+		VALUES (#{name}, #{status})
 		""")
 	@Options(useGeneratedKeys = true, keyProperty = "id")
 	int insert(AllocationTask task);
@@ -37,17 +48,29 @@ public interface AllocationTaskMapper {
 
 	@Update("""
 		UPDATE allocation_task
-		SET name = name
+		SET status = #{status}
 		WHERE id = #{id}
 		""")
 	int cancel(@Param("id") Long id, @Param("status") String status);
 
 	@Update("""
 		UPDATE allocation_task
-		SET name = name
+		SET status = #{status}
 		WHERE id = #{id}
 		""")
 	int updateStatus(@Param("id") Long id, @Param("status") String status);
+
+	@Update("""
+		UPDATE allocation_task
+		SET status = #{newStatus}
+		WHERE id = #{id}
+		  AND status = #{expectedStatus}
+		""")
+	int updateStatusIfCurrent(
+		@Param("id") Long id,
+		@Param("expectedStatus") String expectedStatus,
+		@Param("newStatus") String newStatus
+	);
 
 	@Delete("""
 		DELETE ar
@@ -96,6 +119,27 @@ public interface AllocationTaskMapper {
 		WHERE s.task_id = #{taskId}
 		""")
 	int deleteItemsByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_fragment_slot WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateFragmentSlotsByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_fragment_teacher WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateFragmentTeachersByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_fragment_class_group WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateFragmentClassGroupsByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_fragment_week WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateFragmentWeeksByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_fragment WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateFragmentsByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template_week WHERE allocation_task_id = #{taskId}")
+	int deleteTemplateWeeksByTaskId(Long taskId);
+
+	@Delete("DELETE FROM schedule_template WHERE allocation_task_id = #{taskId}")
+	int deleteTemplatesByTaskId(Long taskId);
 
 	@Delete("""
 		DELETE FROM allocation_scheme

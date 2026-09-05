@@ -46,6 +46,16 @@ public interface AllocationSchemeMapper {
 		""")
 	AllocationScheme findById(Long id);
 
+	@Select("""
+		SELECT id, task_id, scheme_name, summary, scheme_score,
+		       evaluation_summary, model_version,
+		       conflict_summary, valid, status, created_at, updated_at
+		FROM allocation_scheme
+		WHERE id = #{id}
+		FOR UPDATE
+		""")
+	AllocationScheme findByIdForUpdate(Long id);
+
 	@Insert("""
 		INSERT INTO allocation_scheme (
 		    task_id, scheme_name, summary, scheme_score,
@@ -75,6 +85,17 @@ public interface AllocationSchemeMapper {
 
 	@Update("""
 		UPDATE allocation_scheme
+		SET scheme_name = #{schemeName}
+		WHERE id = #{id}
+		  AND status = 'CANDIDATE'
+		""")
+	int updateCandidateName(
+		@Param("id") Long id,
+		@Param("schemeName") String schemeName
+	);
+
+	@Update("""
+		UPDATE allocation_scheme
 		SET status = #{newStatus}
 		WHERE task_id = #{taskId}
 		  AND status = #{oldStatus}
@@ -91,6 +112,18 @@ public interface AllocationSchemeMapper {
 		WHERE id = #{id}
 		""")
 	int updateStatus(@Param("id") Long id, @Param("status") String status);
+
+	@Update("""
+		UPDATE allocation_scheme
+		SET status = #{newStatus}
+		WHERE id = #{id}
+		  AND status = #{expectedStatus}
+		""")
+	int updateStatusIfCurrent(
+		@Param("id") Long id,
+		@Param("expectedStatus") String expectedStatus,
+		@Param("newStatus") String newStatus
+	);
 
 	@Update("""
 		UPDATE allocation_scheme
@@ -145,5 +178,31 @@ public interface AllocationSchemeMapper {
 		@Param("evaluationSummary") String evaluationSummary,
 		@Param("valid") Boolean valid,
 		@Param("conflictSummary") String conflictSummary
+	);
+
+	@Update("""
+		UPDATE allocation_scheme
+		SET summary = #{summary},
+		    valid = #{valid},
+		    conflict_summary = #{conflictSummary}
+		WHERE id = #{id}
+		  AND status = 'CANDIDATE'
+		""")
+	int updateTemplateReviewState(
+		@Param("id") Long id,
+		@Param("summary") String summary,
+		@Param("valid") Boolean valid,
+		@Param("conflictSummary") String conflictSummary
+	);
+
+	@Update("""
+		UPDATE allocation_scheme
+		SET summary = #{summary}
+		WHERE id = #{id}
+		  AND status = 'CANDIDATE'
+		""")
+	int updateTemplateSummaryIfCandidate(
+		@Param("id") Long id,
+		@Param("summary") String summary
 	);
 }

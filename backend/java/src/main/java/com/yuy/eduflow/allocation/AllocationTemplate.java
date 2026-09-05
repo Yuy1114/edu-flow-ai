@@ -7,6 +7,7 @@ import lombok.Data;
 public class AllocationTemplate {
 	private Long id;
 	private Long allocationTaskId;
+	private String generationRunId;
 	private String templateCode;
 	private String templateName;
 	private Integer templateOrder;

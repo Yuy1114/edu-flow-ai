@@ -2,6 +2,7 @@ package com.yuy.eduflow.allocation;
 
 import com.yuy.eduflow.assignment.CourseAssignment;
 import com.yuy.eduflow.assignment.CourseAssignmentMapper;
+import com.yuy.eduflow.assignment.CourseAssignmentService;
 import com.yuy.eduflow.common.exception.ConflictException;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
@@ -28,6 +29,8 @@ public class AllocationSchemeConfirmService {
 	private final AllocationSchemeFeedbackMapper feedbackMapper;
 	private final AllocationItemAdjustmentLogMapper adjustmentLogMapper;
 	private final MlFeedbackEventService feedbackEventService;
+	private final AllocationTemplateDraftService allocationTemplateDraftService;
+	private final CourseAssignmentService courseAssignmentService;
 
 	public AllocationSchemeConfirmService(
 		AllocationSchemeMapper allocationSchemeMapper,
@@ -36,7 +39,9 @@ public class AllocationSchemeConfirmService {
 		CourseAssignmentMapper courseAssignmentMapper,
 		AllocationSchemeFeedbackMapper feedbackMapper,
 		AllocationItemAdjustmentLogMapper adjustmentLogMapper,
-		MlFeedbackEventService feedbackEventService
+		MlFeedbackEventService feedbackEventService,
+		AllocationTemplateDraftService allocationTemplateDraftService,
+		CourseAssignmentService courseAssignmentService
 	) {
 		this.allocationSchemeMapper = allocationSchemeMapper;
 		this.allocationItemMapper = allocationItemMapper;
@@ -45,27 +50,40 @@ public class AllocationSchemeConfirmService {
 		this.feedbackMapper = feedbackMapper;
 		this.adjustmentLogMapper = adjustmentLogMapper;
 		this.feedbackEventService = feedbackEventService;
+		this.allocationTemplateDraftService = allocationTemplateDraftService;
+		this.courseAssignmentService = courseAssignmentService;
 	}
 
 	@Transactional
 	public AllocationConfirmResult confirm(Long schemeId) {
-		AllocationScheme scheme = allocationSchemeMapper.findById(schemeId);
+		// Different allocation tasks may share teachers/classes/rooms. Serialize the
+		// final re-audit + materialization window so two transactions cannot both pass
+		// against an empty conflict set and then commit conflicting assignments.
+		courseAssignmentMapper.lockSchedulePublication();
+		AllocationScheme scheme = allocationSchemeMapper.findByIdForUpdate(schemeId);
 		if (scheme == null) {
 			throw new ResourceNotFoundException("分课方案不存在");
 		}
-		if (!Boolean.TRUE.equals(scheme.getValid())) {
-			throw new ConflictException("分课方案存在冲突，不能确认");
+		if (scheme.getStatus() != SchemeStatus.CANDIDATE) {
+			throw new ValidationException("只有候选状态的分课方案可以确认发布，当前状态：" + scheme.getStatus());
+		}
+		AllocationTask task = allocationTaskMapper.findByIdForUpdate(scheme.getTaskId());
+		if (task == null) throw new ResourceNotFoundException("分课任务不存在");
+		if (task.getStatus() == null) {
+			throw new ValidationException("分课任务状态缺失，不能发布方案");
+		}
+		if (task.getStatus() != TaskStatus.GENERATED
+			&& task.getStatus() != TaskStatus.NEEDS_MANUAL_REVIEW) {
+			throw new ValidationException("当前分课任务状态不允许发布方案：" + task.getStatus());
 		}
 
-		List<AllocationItem> items = allocationItemMapper.findAll(scheme.getId(), null, null, null);
-		if (items.isEmpty()) {
-			throw new ValidationException("分课方案明细为空，不能确认");
+		boolean v35 = allocationTemplateDraftService.isV35(scheme);
+		if (!v35) {
+			throw new ValidationException("第一阶段只允许确认V3.5动态模板方案；旧版allocation_item方案仅保留历史只读查询");
 		}
-		for (AllocationItem item : items) {
-			if (!Boolean.TRUE.equals(item.getValid())) {
-				throw new ValidationException("分课方案存在冲突明细，不能确认：明细ID " + item.getId());
-			}
-		}
+		List<CourseAssignment> assignments = allocationTemplateDraftService.prepareMaterialization(schemeId).stream()
+			.map(session -> toAssignment(schemeId, session))
+			.toList();
 
 		int inactivatedAssignments = courseAssignmentMapper.inactivateByAllocationTaskId(
 			scheme.getTaskId(),
@@ -75,8 +93,11 @@ public class AllocationSchemeConfirmService {
 			schemeId, scheme.getTaskId(), inactivatedAssignments);
 
 		int assignmentCount = 0;
-		for (AllocationItem item : items) {
-			CourseAssignment assignment = toAssignment(scheme.getId(), item);
+		for (CourseAssignment assignment : assignments) {
+			// Old assignments of this allocation task are already inactive. This validation
+			// therefore checks every other ACTIVE formal timetable and assignments inserted
+			// earlier in this same transaction.
+			courseAssignmentService.validateForPublication(assignment);
 			int inserted = courseAssignmentMapper.insert(assignment);
 			if (inserted != 1) {
 				throw new ConflictException("正式课表写入失败");
@@ -84,8 +105,10 @@ public class AllocationSchemeConfirmService {
 			assignmentCount++;
 		}
 
-		if (allocationSchemeMapper.updateStatus(scheme.getId(), SchemeStatus.CONFIRMED.code()) != 1) {
-			throw new ConflictException("分课方案状态更新失败");
+		if (allocationSchemeMapper.updateStatusIfCurrent(
+			scheme.getId(), SchemeStatus.CANDIDATE.code(), SchemeStatus.CONFIRMED.code()
+		) != 1) {
+			throw new ConflictException("分课方案状态已变化，发布已取消");
 		}
 		int rejectedSchemes = allocationSchemeMapper.rejectOtherSelectableSchemes(
 			scheme.getTaskId(),
@@ -94,8 +117,10 @@ public class AllocationSchemeConfirmService {
 		);
 		log.info("Allocation scheme confirmed: schemeId={}, insertedAssignments={}, rejectedOtherSchemes={}",
 			scheme.getId(), assignmentCount, rejectedSchemes);
-		if (allocationTaskMapper.updateStatus(scheme.getTaskId(), SchemeStatus.CONFIRMED.code()) != 1) {
-			throw new ConflictException("分课任务状态更新失败");
+		if (allocationTaskMapper.updateStatusIfCurrent(
+			scheme.getTaskId(), task.getStatus().code(), TaskStatus.CONFIRMED.code()
+		) != 1) {
+			throw new ConflictException("分课任务状态已变化，发布已取消");
 		}
 
 		// 记录确认反馈
@@ -123,6 +148,18 @@ public class AllocationSchemeConfirmService {
 		assignment.setTeachingTaskId(item.getTeachingTaskId());
 		assignment.setClassroomId(item.getClassroomId());
 		assignment.setTimeSlotId(item.getTimeSlotId());
+		assignment.setConsecutiveSlots(null);
+		assignment.setStatus(ACTIVE_STATUS);
+		return assignment;
+	}
+
+	private CourseAssignment toAssignment(Long schemeId, AllocationTemplateSession session) {
+		CourseAssignment assignment = new CourseAssignment();
+		assignment.setSourceSchemeId(schemeId);
+		assignment.setTeachingTaskId(session.getTeachingTaskId());
+		assignment.setClassroomId(session.getClassroomId());
+		assignment.setTimeSlotId(session.getTimeSlotId());
+		assignment.setConsecutiveSlots(session.getConsecutiveSlots());
 		assignment.setStatus(ACTIVE_STATUS);
 		return assignment;
 	}

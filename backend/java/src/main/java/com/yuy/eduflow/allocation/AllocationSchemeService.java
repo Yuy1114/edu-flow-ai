@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -19,13 +20,16 @@ public class AllocationSchemeService {
 
 	private final AllocationSchemeMapper allocationSchemeMapper;
 	private final ConflictCheckResultMapper conflictCheckResultMapper;
+	private final AllocationTemplateDraftService allocationTemplateDraftService;
 
 	public AllocationSchemeService(
 		AllocationSchemeMapper allocationSchemeMapper,
-		ConflictCheckResultMapper conflictCheckResultMapper
+		ConflictCheckResultMapper conflictCheckResultMapper,
+		AllocationTemplateDraftService allocationTemplateDraftService
 	) {
 		this.allocationSchemeMapper = allocationSchemeMapper;
 		this.conflictCheckResultMapper = conflictCheckResultMapper;
+		this.allocationTemplateDraftService = allocationTemplateDraftService;
 	}
 
 	public List<AllocationScheme> findAll(Long taskId, String status) {
@@ -44,21 +48,49 @@ public class AllocationSchemeService {
 	}
 
 	public AllocationScheme create(AllocationSchemeRequest request) {
-		AllocationScheme scheme = toScheme(new AllocationScheme(), request);
-		allocationSchemeMapper.insert(scheme);
-		return findById(scheme.getId());
+		throw new ValidationException("第一阶段已统一使用V3.5动态模板生成方案，禁止通过旧版接口人工创建方案");
 	}
 
+	@Transactional
 	public AllocationScheme update(Long id, AllocationSchemeRequest request) {
-		AllocationScheme existing = findById(id);
-		AllocationScheme scheme = toScheme(existing, request);
-		allocationSchemeMapper.update(scheme);
+		AllocationScheme existing = allocationSchemeMapper.findByIdForUpdate(id);
+		if (existing == null) throw new ResourceNotFoundException("分课方案不存在");
+		if (existing.getStatus() == SchemeStatus.CONFIRMED) {
+			throw new ValidationException("已确认方案不可修改");
+		}
+		if (allocationTemplateDraftService.isV35(existing)) {
+			throw new ValidationException("V3.5方案只能通过模板草案专用接口编辑，生成批次和审计状态不可覆盖");
+		}
+		if (existing.getStatus() != SchemeStatus.CANDIDATE) {
+			throw new ValidationException("只有候选方案可以修改名称");
+		}
+		if (request == null || !StringUtils.hasText(request.schemeName())) {
+			throw new ValidationException("分课方案名称不能为空");
+		}
+		if (allocationSchemeMapper.updateCandidateName(id, request.schemeName().trim()) != 1) {
+			throw new ValidationException("方案状态已变化，修改未保存");
+		}
 		return findById(id);
 	}
 
+	@Transactional
 	public void delete(Long id) {
-		findById(id);
-		allocationSchemeMapper.updateStatus(id, SchemeStatus.REJECTED.code());
+		AllocationScheme scheme = allocationSchemeMapper.findByIdForUpdate(id);
+		if (scheme == null) throw new ResourceNotFoundException("分课方案不存在");
+		if (scheme.getStatus() == SchemeStatus.CONFIRMED) {
+			throw new ValidationException("已确认方案不可删除或改写生命周期状态");
+		}
+		if (allocationTemplateDraftService.isV35(scheme)) {
+			throw new ValidationException("V3.5方案与整批动态模板共享生成结果；请删除排课任务或重新生成，不能单独删除方案元数据");
+		}
+		if (scheme.getStatus() != SchemeStatus.CANDIDATE) {
+			throw new ValidationException("只有候选方案可以拒绝删除");
+		}
+		if (allocationSchemeMapper.updateStatusIfCurrent(
+			id, SchemeStatus.CANDIDATE.code(), SchemeStatus.REJECTED.code()
+		) != 1) {
+			throw new ValidationException("方案状态已变化，删除未执行");
+		}
 	}
 
 	public ConflictDiagnosis findConflictDiagnosis(Long schemeId) {
@@ -118,6 +150,7 @@ public class AllocationSchemeService {
 			case "TEACHER_TIME" -> "教师时间冲突";
 			case "CLASS_GROUP_TIME" -> "班级时间冲突";
 			case "CLASSROOM_TIME" -> "教室时间冲突";
+			case "INVALID_TIME_BLOCK" -> "非法连排时间块";
 			case "TEACHER_WORKLOAD" -> "教师工作量冲突";
 			case "TEACHING_TASK_HOURS" -> "教学任务课时不匹配";
 			default -> "未知冲突";
@@ -136,21 +169,4 @@ public class AllocationSchemeService {
 		return "共发现 " + total + " 条问题：" + String.join("，", parts);
 	}
 
-	private AllocationScheme toScheme(AllocationScheme scheme, AllocationSchemeRequest request) {
-		Assert.positiveId(request.taskId(), "分课任务ID");
-		if (!StringUtils.hasText(request.schemeName())) {
-			throw new ValidationException("分课方案名称不能为空");
-		}
-		scheme.setTaskId(request.taskId());
-		scheme.setSchemeName(request.schemeName().trim());
-		scheme.setSummary(clean(request.summary()));
-		scheme.setConflictSummary(clean(request.conflictSummary()));
-		scheme.setValid(request.valid() != null ? request.valid() : true);
-		scheme.setStatus(StringUtils.hasText(request.status()) ? SchemeStatus.from(request.status().trim()) : SchemeStatus.CANDIDATE);
-		return scheme;
-	}
-
-	private String clean(String value) {
-		return StringUtils.hasText(value) ? value.trim() : null;
-	}
 }

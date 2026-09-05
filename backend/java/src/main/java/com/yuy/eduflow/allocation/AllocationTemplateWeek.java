@@ -7,6 +7,7 @@ import lombok.Data;
 public class AllocationTemplateWeek {
 	private Long id;
 	private Long allocationTaskId;
+	private String generationRunId;
 	private Integer weekNumber;
 	private Long templateId;
 	private String templateCode;

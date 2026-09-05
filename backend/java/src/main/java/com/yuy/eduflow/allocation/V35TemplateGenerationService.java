@@ -1,35 +1,67 @@
 package com.yuy.eduflow.allocation;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.yuy.eduflow.common.exception.ValidationException;
+import com.yuy.eduflow.ml.MlApiProperties;
+import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
+/**
+ * Thin HTTP adapter for the durable Python scheduling worker.
+ *
+ * Java deliberately owns no executor or in-memory status. A Java restart can
+ * therefore query the same DB-backed Python job instead of reporting IDLE or a
+ * stale success for work that was still running.
+ */
 @Slf4j
 @Service
 public class V35TemplateGenerationService {
 
-	private static final Path PROJECT_DIR = Paths.get(System.getProperty("user.dir")).getParent();
-	private static final Path PYTHON_VENV = PROJECT_DIR.resolve("python/.venv/bin/python");
-	private static final String PYTHON_MODULE = "scheduler.run_pipeline";
+	private static final String RESULT_PREFIX = "EDUFLOW_PIPELINE_RESULT=";
+	private static final Pattern RESULT_STATUS = Pattern.compile("\\\"status\\\":\\\"([A-Z_]+)\\\"");
+	private static final Set<String> CLIENT_STATUSES = Set.of(
+		"IDLE", "RUNNING", "SUCCESS", "NEEDS_MANUAL_REVIEW", "BLOCKED", "FAILED"
+	);
 
-	private final ConcurrentHashMap<Long, V35TemplateGenerationStatus> statusMap = new ConcurrentHashMap<>();
-	private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-		Thread t = new Thread(r, "v35-pipeline");
-		t.setDaemon(true);
-		return t;
-	});
+	private final RestClient restClient;
+
+	public V35TemplateGenerationService(
+		MlApiProperties properties,
+		RestClient.Builder restClientBuilder
+	) {
+		SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+		requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+		requestFactory.setReadTimeout(Duration.ofSeconds(30));
+		this.restClient = restClientBuilder
+			.requestFactory(requestFactory)
+			.baseUrl(properties.getUrl())
+			.build();
+	}
 
 	public V35TemplateGenerationStatus getStatus(Long allocationTaskId) {
-		return statusMap.getOrDefault(allocationTaskId, new V35TemplateGenerationStatus("IDLE", null, 0));
+		try {
+			V35TemplateGenerationStatus status = restClient.get()
+				.uri(uriBuilder -> uriBuilder
+					.path("/api/ml/pipeline/jobs/latest")
+					.queryParam("allocation_task_id", allocationTaskId)
+					.build())
+				.retrieve()
+				.body(V35TemplateGenerationStatus.class);
+			return normalize(status);
+		} catch (RestClientException exception) {
+			log.error("Unable to query formal scheduling job for allocationTaskId={}", allocationTaskId, exception);
+			return failed("Python 排课服务不可用：" + conciseMessage(exception));
+		}
 	}
 
 	public V35TemplateGenerationStatus startGeneration(
@@ -41,85 +73,81 @@ public class V35TemplateGenerationService {
 		Boolean importDb,
 		Boolean truncateDb
 	) {
-		V35TemplateGenerationStatus existing = statusMap.get(allocationTaskId);
-		if (existing != null && "RUNNING".equals(existing.status())) {
-			return existing;
+		int requestedTotalWeeks = totalWeeks != null ? totalWeeks : SchedulingTimePolicy.LAST_WEEK;
+		if (requestedTotalWeeks < SchedulingTimePolicy.FIRST_WEEK
+			|| requestedTotalWeeks > SchedulingTimePolicy.LAST_WEEK) {
+			throw new ValidationException("正式排课周数必须在1到18之间");
 		}
+		Map<String, Object> request = new LinkedHashMap<>();
+		request.put("allocationTaskId", allocationTaskId);
+		request.put("totalWeeks", requestedTotalWeeks);
+		request.put("topK", topK != null ? topK : 300);
+		request.put("maxTemplates", maxTemplates != null ? maxTemplates : 8);
+		request.put("trainModel", false);
+		// This controller endpoint is the formal chain: a successful response must
+		// always correspond to queryable DB rows, including when older clients omit
+		// the legacy importDb flag.
+		request.put("importDb", true);
+		request.put("truncateDb", false);
 
-		long startedAt = System.currentTimeMillis();
-		V35TemplateGenerationStatus running = new V35TemplateGenerationStatus("RUNNING", startedAt, 0);
-		statusMap.put(allocationTaskId, running);
-
-		executor.submit(() -> {
-			try {
-				_runPipeline(allocationTaskId, totalWeeks, topK, maxTemplates, trainModel, importDb, truncateDb);
-				statusMap.put(allocationTaskId, new V35TemplateGenerationStatus("SUCCESS", startedAt, 100));
-				log.info("V3.5 pipeline completed for allocationTaskId={}", allocationTaskId);
-			} catch (Exception e) {
-				log.error("V3.5 pipeline failed for allocationTaskId={}", allocationTaskId, e);
-				String errorMsg = e.getMessage() != null ? e.getMessage() : "unknown error";
-				statusMap.put(allocationTaskId, new V35TemplateGenerationStatus("FAILED", startedAt, 100, errorMsg));
-			}
-		});
-
-		return running;
+		try {
+			V35TemplateGenerationStatus status = restClient.post()
+				.uri("/api/ml/pipeline/jobs")
+				.contentType(MediaType.APPLICATION_JSON)
+				.body(request)
+				.retrieve()
+				.body(V35TemplateGenerationStatus.class);
+			V35TemplateGenerationStatus normalized = normalize(status);
+			log.info(
+				"Submitted formal scheduling job allocationTaskId={}, jobId={}, status={}",
+				allocationTaskId,
+				normalized.jobId(),
+				normalized.status()
+			);
+			return normalized;
+		} catch (RestClientException exception) {
+			log.error("Unable to submit formal scheduling job for allocationTaskId={}", allocationTaskId, exception);
+			return failed("Python 排课服务拒绝任务：" + conciseMessage(exception));
+		}
 	}
 
-	private void _runPipeline(
-		Long allocationTaskId,
-		Integer totalWeeks,
-		Integer topK,
-		Integer maxTemplates,
-		Boolean trainModel,
-		Boolean importDb,
-		Boolean truncateDb
-	) throws Exception {
-		List<String> cmd = new ArrayList<>();
-		cmd.add(PYTHON_VENV.toString());
-		cmd.add("-m");
-		cmd.add(PYTHON_MODULE);
-		cmd.add("--allocation-task-id");
-		cmd.add(String.valueOf(allocationTaskId));
-		cmd.add("--total-weeks");
-		cmd.add(String.valueOf(totalWeeks != null ? totalWeeks : 18));
-		cmd.add("--top-k");
-		cmd.add(String.valueOf(topK != null ? topK : 300));
-		cmd.add("--max-templates");
-		cmd.add(String.valueOf(maxTemplates != null ? maxTemplates : 8));
-		if (Boolean.TRUE.equals(trainModel)) {
-			cmd.add("--train-model");
+	static V35TemplateGenerationStatus normalize(V35TemplateGenerationStatus status) {
+		if (status == null || status.status() == null) {
+			return failed("排课服务未返回任务状态");
 		}
-		if (Boolean.TRUE.equals(importDb)) {
-			cmd.add("--import-db");
-		}
-		if (Boolean.TRUE.equals(truncateDb)) {
-			cmd.add("--truncate-db");
-		}
-
-		ProcessBuilder pb = new ProcessBuilder(cmd);
-		pb.directory(PROJECT_DIR.resolve("python").toFile());
-		pb.redirectErrorStream(true);
-		log.info("Running V3.5 pipeline: {}", String.join(" ", cmd));
-
-		Process process = pb.start();
-		StringBuilder output = new StringBuilder();
-		try (BufferedReader reader = new BufferedReader(
-			new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
-		)) {
-			String line;
-			while ((line = reader.readLine()) != null) {
-				output.append(line).append("\n");
-			}
-		}
-
-		int exitCode = process.waitFor();
-		if (exitCode != 0) {
-			String out = output.toString();
-			throw new RuntimeException(
-				"V3.5 pipeline exited with code " + exitCode
-				+ (out.length() > 500 ? out.substring(0, 500) + "..." : out)
+		if ("QUEUED".equals(status.status())) {
+			return new V35TemplateGenerationStatus(
+				"RUNNING", status.startedAt(), status.progress(), status.error(),
+				status.jobId(), status.finishedAt(), status.summaryPath()
 			);
 		}
-		log.info("V3.5 pipeline output:\n{}", output);
+		if (!CLIENT_STATUSES.contains(status.status())) {
+			return failed("排课服务返回未知状态：" + status.status());
+		}
+		return status;
+	}
+
+	private static V35TemplateGenerationStatus failed(String message) {
+		return new V35TemplateGenerationStatus("FAILED", null, 100, message, null, null, null);
+	}
+
+	private static String conciseMessage(Exception exception) {
+		String message = exception.getMessage();
+		if (message == null || message.isBlank()) {
+			return exception.getClass().getSimpleName();
+		}
+		return message.length() <= 500 ? message : message.substring(0, 500) + "...";
+	}
+
+	/** Kept as a strict compatibility parser for historical CLI-result tests. */
+	static String parsePipelineStatus(String line) {
+		if (line == null || !line.startsWith(RESULT_PREFIX)) {
+			return null;
+		}
+		Matcher matcher = RESULT_STATUS.matcher(line.substring(RESULT_PREFIX.length()));
+		if (!matcher.find()) {
+			throw new IllegalArgumentException("invalid pipeline result line");
+		}
+		return matcher.group(1);
 	}
 }

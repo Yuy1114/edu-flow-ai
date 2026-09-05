@@ -3,11 +3,14 @@
 <mapper namespace="com.yuy.eduflow.allocation.AllocationTaskMapper">
 
 	<select id="findAll" resultType="com.yuy.eduflow.allocation.AllocationTask">
-	    SELECT id, name
+	    SELECT id, name, status, created_at, updated_at
 	    FROM allocation_task
 	    WHERE 1 = 1
 	    <if test='keyword != null and keyword != ""'>
 	      AND name LIKE CONCAT('%', #{keyword}, '%')
+	    </if>
+	    <if test='status != null and status != ""'>
+	      AND status = #{status}
 	    </if>
 	    ORDER BY id DESC
 	</select>
