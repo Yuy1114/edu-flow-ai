@@ -78,4 +78,34 @@ public class MlApiClient {
 			return false;
 		}
 	}
+
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> previewSimulation(Map<String, Object> requestParams) {
+		return restClient.post()
+			.uri("/api/ml/simulation/preview")
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(requestParams)
+			.retrieve()
+			.body(Map.class);
+	}
+
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> runSimulation(Map<String, Object> requestParams, boolean boundary) {
+		return restClient.post()
+			.uri(boundary ? "/api/ml/simulation/boundary" : "/api/ml/simulation/run")
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(requestParams)
+			.retrieve()
+			.body(Map.class);
+	}
+
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> querySimulationTimetable(Map<String, Object> requestParams) {
+		return restClient.post()
+			.uri("/api/ml/simulation/timetable")
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(requestParams)
+			.retrieve()
+			.body(Map.class);
+	}
 }

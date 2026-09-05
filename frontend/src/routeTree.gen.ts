@@ -15,6 +15,7 @@ import { Route as AdminTimetableRouteImport } from './routes/admin/timetable'
 import { Route as AdminTeachingTasksRouteImport } from './routes/admin/teaching-tasks'
 import { Route as AdminTeachersRouteImport } from './routes/admin/teachers'
 import { Route as AdminTeacherProfilesRouteImport } from './routes/admin/teacher-profiles'
+import { Route as AdminSimulationRouteImport } from './routes/admin/simulation'
 import { Route as AdminModelTrainingRouteImport } from './routes/admin/model-training'
 import { Route as AdminImportReviewRouteImport } from './routes/admin/import-review'
 import { Route as AdminCoursesRouteImport } from './routes/admin/courses'
@@ -53,6 +54,11 @@ const AdminTeachersRoute = AdminTeachersRouteImport.update({
 const AdminTeacherProfilesRoute = AdminTeacherProfilesRouteImport.update({
   id: '/teacher-profiles',
   path: '/teacher-profiles',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSimulationRoute = AdminSimulationRouteImport.update({
+  id: '/simulation',
+  path: '/simulation',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminModelTrainingRoute = AdminModelTrainingRouteImport.update({
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/admin/courses': typeof AdminCoursesRoute
   '/admin/import-review': typeof AdminImportReviewRoute
   '/admin/model-training': typeof AdminModelTrainingRoute
+  '/admin/simulation': typeof AdminSimulationRoute
   '/admin/teacher-profiles': typeof AdminTeacherProfilesRoute
   '/admin/teachers': typeof AdminTeachersRoute
   '/admin/teaching-tasks': typeof AdminTeachingTasksRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/admin/courses': typeof AdminCoursesRoute
   '/admin/import-review': typeof AdminImportReviewRoute
   '/admin/model-training': typeof AdminModelTrainingRoute
+  '/admin/simulation': typeof AdminSimulationRoute
   '/admin/teacher-profiles': typeof AdminTeacherProfilesRoute
   '/admin/teachers': typeof AdminTeachersRoute
   '/admin/teaching-tasks': typeof AdminTeachingTasksRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/admin/courses': typeof AdminCoursesRoute
   '/admin/import-review': typeof AdminImportReviewRoute
   '/admin/model-training': typeof AdminModelTrainingRoute
+  '/admin/simulation': typeof AdminSimulationRoute
   '/admin/teacher-profiles': typeof AdminTeacherProfilesRoute
   '/admin/teachers': typeof AdminTeachersRoute
   '/admin/teaching-tasks': typeof AdminTeachingTasksRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/admin/courses'
     | '/admin/import-review'
     | '/admin/model-training'
+    | '/admin/simulation'
     | '/admin/teacher-profiles'
     | '/admin/teachers'
     | '/admin/teaching-tasks'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/admin/courses'
     | '/admin/import-review'
     | '/admin/model-training'
+    | '/admin/simulation'
     | '/admin/teacher-profiles'
     | '/admin/teachers'
     | '/admin/teaching-tasks'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/admin/courses'
     | '/admin/import-review'
     | '/admin/model-training'
+    | '/admin/simulation'
     | '/admin/teacher-profiles'
     | '/admin/teachers'
     | '/admin/teaching-tasks'
@@ -255,6 +267,13 @@ declare module '@tanstack/react-router' {
       path: '/teacher-profiles'
       fullPath: '/admin/teacher-profiles'
       preLoaderRoute: typeof AdminTeacherProfilesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/simulation': {
+      id: '/admin/simulation'
+      path: '/simulation'
+      fullPath: '/admin/simulation'
+      preLoaderRoute: typeof AdminSimulationRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/model-training': {
@@ -344,6 +363,7 @@ interface AdminRouteChildren {
   AdminCoursesRoute: typeof AdminCoursesRoute
   AdminImportReviewRoute: typeof AdminImportReviewRoute
   AdminModelTrainingRoute: typeof AdminModelTrainingRoute
+  AdminSimulationRoute: typeof AdminSimulationRoute
   AdminTeacherProfilesRoute: typeof AdminTeacherProfilesRoute
   AdminTeachersRoute: typeof AdminTeachersRoute
   AdminTeachingTasksRoute: typeof AdminTeachingTasksRoute
@@ -359,6 +379,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminCoursesRoute: AdminCoursesRoute,
   AdminImportReviewRoute: AdminImportReviewRoute,
   AdminModelTrainingRoute: AdminModelTrainingRoute,
+  AdminSimulationRoute: AdminSimulationRoute,
   AdminTeacherProfilesRoute: AdminTeacherProfilesRoute,
   AdminTeachersRoute: AdminTeachersRoute,
   AdminTeachingTasksRoute: AdminTeachingTasksRoute,
