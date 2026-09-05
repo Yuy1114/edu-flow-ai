@@ -4,8 +4,11 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
       MYSQL_DATABASE: edu_flow_ai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     ports:
-      - "3307:3306"
+      - "${DB_HOST_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -15,26 +18,54 @@ services:
       timeout: 5s
       retries: 5
 
+  db-migrate:
+    image: mysql:8.0
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: edu_flow_ai
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD}
+      MIGRATION_ROOT: /migrations
+    volumes:
+      - ./backend/db:/migrations:ro
+    entrypoint: [ "/bin/bash", "/migrations/migrate.sh" ]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   ml-api:
     build:
-      context: .
-      dockerfile: backend/python/Dockerfile
+      context: ./backend/python
+      dockerfile: Dockerfile
     environment:
       DB_URL: jdbc:mysql://db:3306/edu_flow_ai?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       DB_USERNAME: root
       DB_PASSWORD: ${DB_PASSWORD}
       ML_LOG_LEVEL: ${ML_LOG_LEVEL:-INFO}
-      ML_GA_PROFILE: ${ML_GA_PROFILE:-default}
+      EDU_FLOW_PIPELINE_TIMEOUT_SECONDS: ${EDU_FLOW_PIPELINE_TIMEOUT_SECONDS:-1800}
+      EDU_FLOW_SIMULATION_DIR: /var/lib/edu-flow-ai/simulations
+      EDU_FLOW_PIPELINE_LOG_DIR: /var/lib/edu-flow-ai/pipeline-jobs
     ports:
-      - "8000:8000"
+      - "${ML_API_HOST_PORT:-8000}:8000"
+    volumes:
+      - simulation_data:/var/lib/edu-flow-ai/simulations
+      - pipeline_data:/workspace/backend/data/pipeline
+      - pipeline_job_data:/var/lib/edu-flow-ai/pipeline-jobs
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ml/health', timeout=3)" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     depends_on:
-      db:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
 
   server:
     build:
-      context: .
-      dockerfile: backend/java/Dockerfile
+      context: ./backend/java
+      dockerfile: Dockerfile
     environment:
       DB_URL: jdbc:mysql://db:3306/edu_flow_ai?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       DB_USERNAME: root
@@ -44,17 +75,17 @@ services:
       OPENAI_CHAT_BASE_URL: ${OPENAI_CHAT_BASE_URL}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-deepseek-v4-flash}
     ports:
-      - "8080:8080"
+      - "${SERVER_HOST_PORT:-8080}:8080"
     depends_on:
-      db:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       ml-api:
-        condition: service_started
+        condition: service_healthy
 
   web:
     build:
       context: .
-      dockerfile: web/Dockerfile
+      dockerfile: frontend/Dockerfile
     ports:
       - "5173:80"
     depends_on:
@@ -62,3 +93,6 @@ services:
 
 volumes:
   mysql_data:
+  simulation_data:
+  pipeline_data:
+  pipeline_job_data:

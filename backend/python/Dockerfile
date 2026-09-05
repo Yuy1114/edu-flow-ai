@@ -1,15 +1,17 @@
 FROM python:3.13-slim
 
-WORKDIR /app
+WORKDIR /workspace/backend/python
 
-# Install dependencies
-COPY backend/python/pyproject.toml .
+# Copy installable packages before building the local wheel.
+COPY pyproject.toml .
+COPY app/ ./app/
+COPY scheduler/ ./scheduler/
+COPY ingest/ ./ingest/
 RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir .
 
-# Copy the app package
-COPY backend/python/app/ ./app/
-
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/workspace/backend/python
+ENV EDU_FLOW_SIMULATION_DIR=/var/lib/edu-flow-ai/simulations
+ENV EDU_FLOW_PIPELINE_LOG_DIR=/var/lib/edu-flow-ai/pipeline-jobs
 
 EXPOSE 8000
 

@@ -3,11 +3,11 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 
 # Cache dependencies layer
-COPY backend/java/pom.xml .
+COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
 # Build
-COPY backend/java/src ./src
+COPY src ./src
 RUN mvn package -DskipTests -B
 
 # Runtime

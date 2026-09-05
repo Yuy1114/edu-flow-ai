@@ -9,7 +9,12 @@ backend/logs
 backend/models
 backend/db/backups
 
-backend/.envtarget/
+backend/.env
+target/
+frontend/dist/
+_test/
+**/__pycache__/
+*.py[cod]
 .DS_Store
 **/.env
 !.env.example
