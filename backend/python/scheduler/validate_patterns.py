@@ -39,7 +39,6 @@ def validate(*, input_path: Path = DEFAULT_OUTPUT_PATH, report_path: Path = DEFA
 def _issues(pattern: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     course_type = str(pattern.get("course_type") or "")
-    required_room_type = str(pattern.get("required_room_type") or "")
     weekly_slot_count = _safe_int(pattern.get("weekly_slot_count"))
     duration_weeks = _safe_int(pattern.get("duration_weeks"))
     consecutive_slots = _safe_int(pattern.get("consecutive_slots"))
@@ -52,12 +51,12 @@ def _issues(pattern: dict[str, Any]) -> list[str]:
         issues.append("duration_weeks_not_positive")
     if duration_weeks > 18:
         issues.append("duration_weeks_gt_18")
-    if consecutive_slots not in {1, 2}:
+    if consecutive_slots not in {2, 4}:
         issues.append("bad_consecutive_slots")
-    if _is_lab(course_type, required_room_type) and consecutive_slots != 2:
-        issues.append("lab_not_consecutive_2")
-    if not _is_lab(course_type, required_room_type) and consecutive_slots != 1:
-        issues.append("theory_not_consecutive_1")
+    if _is_four_period_course(course_type) and consecutive_slots != 4:
+        issues.append("lab_not_consecutive_4")
+    if not _is_four_period_course(course_type) and consecutive_slots != 2:
+        issues.append("theory_not_consecutive_2")
     if observed_week_count > 0 and duration_weeks != observed_week_count and pattern.get("pattern_source") == "observed_history":
         issues.append("duration_weeks_mismatch_observed")
     if len(week_mask) != duration_weeks:
@@ -85,8 +84,8 @@ def _counts(patterns: list[dict[str, Any]], key: str, *, limit: int | None = Non
     return dict(items)
 
 
-def _is_lab(course_type: str, required_room_type: str) -> bool:
-    return course_type == "上机课" or required_room_type == "机房"
+def _is_four_period_course(course_type: str) -> bool:
+    return course_type in {"上机课", "实验课"}
 
 
 def _safe_int(value: Any) -> int:

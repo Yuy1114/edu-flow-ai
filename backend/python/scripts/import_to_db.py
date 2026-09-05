@@ -145,17 +145,16 @@ def import_classrooms(cur, rows: list[dict]) -> dict[str, int]:
 
 
 def import_time_slots(cur) -> dict[tuple, int]:
-    """生成 18 周 × 7 天 × 5 节次 = 630 个 time_slot，返回 {(week,day,period): id}"""
+    """生成 18 周 × 7 天 × 10 个原子节次，返回 {(week,day,period): id}。"""
     mapping = {}
     sql = """INSERT IGNORE INTO time_slot (week_number, day_of_week, period_index, label)
              VALUES (%s, %s, %s, %s)"""
     day_names = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    period_names = ["", "1-2节", "3-4节", "5-6节", "7-8节", "9-11节"]
     count = 0
     for w in range(1, 19):
         for d in range(1, 8):
-            for p in range(1, 6):
-                label = f"第{w}周 {day_names[d]} {period_names[p]}"
+            for p in range(1, 11):
+                label = f"第{w}周 {day_names[d]} 第{p}节"
                 cur.execute(sql, (w, d, p, label))
                 cur.execute(
                     "SELECT id FROM time_slot WHERE week_number=%s AND day_of_week=%s AND period_index=%s",

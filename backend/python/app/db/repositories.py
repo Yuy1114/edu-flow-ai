@@ -17,7 +17,7 @@ def _parse_profile_preference(raw_json: str) -> dict[str, Any]:
 
 
 def _parse_availability_matrix_unavailable(raw_json: str) -> set[tuple[int, int]]:
-    """Parse 5×7 matrix[period-1][weekday-1]; -1 means fixed weekly unavailable."""
+    """Parse 10×7 atomic-period matrix; -1 means fixed weekly unavailable."""
     slots: set[tuple[int, int]] = set()
     if not raw_json or not raw_json.strip():
         return slots
@@ -27,7 +27,10 @@ def _parse_availability_matrix_unavailable(raw_json: str) -> set[tuple[int, int]
         return slots
     if not isinstance(matrix, list):
         return slots
-    for period_index, row in enumerate(matrix[:5], start=1):
+    # Backward compatibility: the old profile used five two-period blocks.
+    # Duplicate each row so its meaning is preserved on the 10×7 atomic axis.
+    normalized = [row for block in matrix for row in (block, block)] if len(matrix) == 5 else matrix[:10]
+    for period_index, row in enumerate(normalized, start=1):
         if not isinstance(row, list):
             continue
         for weekday_index, value in enumerate(row[:7], start=1):
@@ -136,7 +139,7 @@ def fetch_time_slots(connection) -> list[dict[str, Any]]:
     )
 
 
-def ensure_default_time_slots(connection, *, weeks: int = 20, weekdays: int = 7, periods: int = 5) -> int:
+def ensure_default_time_slots(connection, *, weeks: int = 18, weekdays: int = 7, periods: int = 10) -> int:
     """Seed default time slots only when the table is empty.
 
     Returns the number of inserted rows. Existing time_slot data is never
@@ -148,19 +151,12 @@ def ensure_default_time_slots(connection, *, weeks: int = 20, weekdays: int = 7,
     if existing > 0:
         return 0
 
-    labels = {
-        1: "1-2节",
-        2: "3-4节",
-        3: "5-6节",
-        4: "7-8节",
-        5: "9-11节",
-    }
     inserted = 0
     with connection.cursor() as cursor:
         for week in range(1, weeks + 1):
             for day in range(1, weekdays + 1):
                 for period in range(1, periods + 1):
-                    label = f"第{week}周 周{day} {labels.get(period, f'第{period}节')}"
+                    label = f"第{week}周 周{day} 第{period}节"
                     cursor.execute(
                         """
                         INSERT IGNORE INTO time_slot

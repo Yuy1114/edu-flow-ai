@@ -26,15 +26,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "real-dataset"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "imported"
 
-PERIOD_LABELS = {
-    1: "1-2",
-    2: "3-4",
-    3: "5-6",
-    4: "7-8",
-    5: "9-10",
-}
-
-
 @dataclass(frozen=True)
 class TeacherRow:
     employee_no: str
@@ -227,11 +218,11 @@ def build_time_slots() -> list[TimeSlotRow]:
             week_number=week,
             day_of_week=day,
             period_index=period,
-            label=f"第{week}周 周{day} 第{PERIOD_LABELS[period]}节",
+            label=f"第{week}周 周{day} 第{period}节",
         )
         for week in range(1, 19)
         for day in range(1, 8)
-        for period in range(1, 6)
+        for period in range(1, 11)
     ]
 
 
@@ -318,7 +309,7 @@ def clean_dataset(raw_dir: Path, department: str) -> CleanDataset:
             TeacherProfileRow(
                 employee_no=employee_no,
                 teacher_name=teacher["name"],
-                availability_matrix_json=json.dumps([[0] * 7 for _ in range(5)], ensure_ascii=False),
+                availability_matrix_json=json.dumps([[0] * 7 for _ in range(10)], ensure_ascii=False),
                 profile_note="",
                 profile_preference_json=json.dumps({}, ensure_ascii=False),
             )

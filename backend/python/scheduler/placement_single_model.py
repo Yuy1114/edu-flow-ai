@@ -24,6 +24,8 @@ DATA_PATH = REPO_ROOT / "backend" / "models" / "v3.5" / "placement" / "clean_tra
 OUTPUT_DIR = REPO_ROOT / "backend" / "models" / "v3.5" / "placement_single"
 MODEL_PATH = OUTPUT_DIR / "single_resource_lgbm.txt"
 META_PATH = OUTPUT_DIR / "placement_single_meta.json"
+TIME_AXIS_VERSION = "atomic-45m-10-v1"
+MAX_ATOMIC_PERIOD_INDEX = 10
 
 RESOURCE_KEY = "resource_key"
 ROOM_LABEL = "classroom_name"
@@ -89,7 +91,15 @@ class V35SinglePlacementModel:
         if not meta_path.exists():
             raise FileNotFoundError(f"V3.5 single placement meta not found: {meta_path}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        model = lgb.Booster(model_file=meta["model_path"])
+        if meta.get("time_axis_version") != TIME_AXIS_VERSION:
+            raise ValueError(
+                "placement model time axis is incompatible; retrain on the "
+                f"{TIME_AXIS_VERSION} contract before enabling model guidance"
+            )
+        model_file = Path(str(meta.get("model_file") or meta.get("model_path") or ""))
+        if not model_file.is_absolute():
+            model_file = model_dir / model_file
+        model = lgb.Booster(model_file=str(model_file))
         return cls(model=model, meta=meta)
 
     def predict_topk(self, task_like: dict[str, Any], *, top_k: int = 40, slot_top_k: int | None = None) -> list[PlacementCandidate]:
@@ -172,9 +182,12 @@ def train(data_path: Path = DATA_PATH, output_dir: Path = OUTPUT_DIR, *, rounds:
 
     meta = {
         "model_type": "v3.5_lightgbm_single_resource_placement",
-        "version": "0.1",
-        "training_data": str(data_path),
-        "model_path": str(model_path),
+        "version": "0.2",
+        "time_axis_version": TIME_AXIS_VERSION,
+        "period_minutes": 45,
+        "period_index_domain": [1, MAX_ATOMIC_PERIOD_INDEX],
+        "training_data_file": data_path.name,
+        "model_file": model_path.name,
         "features": FEATURES,
         "text_features": TEXT_FEATURES,
         "label_by_resource": label_by_resource,
@@ -232,7 +245,12 @@ def _load_training_frame(data_path: Path) -> pd.DataFrame:
             df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
     df = df[df[RESOURCE_KEY].astype(str).str.strip() != ""].copy()
     df = df[df[ROOM_LABEL].astype(str).str.strip() != ""].copy()
-    df = df[(df["day_of_week"] > 0) & (df["period_index"] > 0)].copy()
+    df = df[
+        (df["day_of_week"] > 0)
+        & (df["day_of_week"] <= 7)
+        & (df["period_index"] > 0)
+        & (df["period_index"] <= MAX_ATOMIC_PERIOD_INDEX)
+    ].copy()
     df[SLOT_LABEL] = df["day_of_week"].astype(int).astype(str) + "|" + df["period_index"].astype(int).astype(str)
     df[RESOURCE_KEY] = df[ROOM_LABEL].astype(str) + "|" + df["day_of_week"].astype(int).astype(str) + "|" + df["period_index"].astype(int).astype(str)
     return df

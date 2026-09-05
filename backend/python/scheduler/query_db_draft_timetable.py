@@ -81,17 +81,38 @@ def _query_week_from_data(data: dict[str, list[dict[str, Any]]], week_number: in
     occurrence = _week_occurrence(data["weeks"], template_id, week_number)
     fragments = [row for row in data["fragments"] if row["template_id"] == template_id]
     slots = [row for row in data["slots"] if row["template_id"] == template_id]
+    teacher_ids_by_fragment: dict[Any, list[int]] = {}
+    for row in data.get("fragment_teachers", []):
+        teacher_ids_by_fragment.setdefault(row.get("template_fragment_id"), []).append(int(row["teacher_id"]))
+    class_group_ids_by_fragment: dict[Any, list[int]] = {}
+    for row in data.get("fragment_class_groups", []):
+        class_group_ids_by_fragment.setdefault(row.get("template_fragment_id"), []).append(int(row["class_group_id"]))
     fragment_by_id = {row["id"]: row for row in fragments}
     entries = []
     for slot in slots:
         fragment = fragment_by_id.get(slot["template_fragment_id"])
         if not fragment:
             continue
-        # 相对掩码: 课程只在其模板被映射到的前 duration_weeks 个周上生效
-        duration = int(fragment.get("duration_weeks") or 0)
-        if duration > 0 and occurrence > duration:
-            continue
-        entries.append(_entry_from_slot(week_number, week_row, fragment, slot))
+        # Dynamic covers carry absolute week masks.  ``template_week_mask`` is
+        # the exact contribution represented by this deduplicated template;
+        # ``week_mask`` is the task's complete active span.  Duration-based
+        # filtering remains only for historical phase-cover artifacts.
+        absolute_mask = _int_list(fragment.get("template_week_mask") or fragment.get("week_mask"))
+        if absolute_mask:
+            if week_number not in absolute_mask:
+                continue
+        else:
+            duration = int(fragment.get("duration_weeks") or 0)
+            if duration > 0 and occurrence > duration:
+                continue
+        entries.append(_entry_from_slot(
+            week_number,
+            week_row,
+            fragment,
+            slot,
+            teacher_ids=teacher_ids_by_fragment.get(fragment["id"], []),
+            class_group_ids=class_group_ids_by_fragment.get(fragment["id"], []),
+        ))
     entries.sort(key=lambda item: (item["day_of_week"], item["period_index"], item["classroom_name"], item["class_name"] or ""))
     return {
         "week_number": week_number,
@@ -109,7 +130,34 @@ def _week_occurrence(weeks: list[dict[str, Any]], template_id: Any, week_number:
     return mapped.index(week_number) + 1 if week_number in mapped else 0
 
 
-def _entry_from_slot(week_number: int, week_row: dict[str, Any], fragment: dict[str, Any], slot: dict[str, Any]) -> dict[str, Any]:
+def _int_list(value: Any) -> list[int]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = [part.strip() for part in value.split(",") if part.strip()]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    result = []
+    for item in value:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number not in result:
+            result.append(number)
+    return result
+
+
+def _entry_from_slot(
+    week_number: int,
+    week_row: dict[str, Any],
+    fragment: dict[str, Any],
+    slot: dict[str, Any],
+    *,
+    teacher_ids: list[int],
+    class_group_ids: list[int],
+) -> dict[str, Any]:
     return {
         "week_number": week_number,
         "template_id": week_row["template_id"],
@@ -117,6 +165,11 @@ def _entry_from_slot(week_number: int, week_row: dict[str, Any], fragment: dict[
         "template_fragment_id": fragment["id"],
         "fragment_code": fragment["fragment_code"],
         "source_key": fragment.get("source_key"),
+        "teaching_task_id": fragment.get("teaching_task_id"),
+        "course_id": fragment.get("course_id"),
+        "teacher_ids": teacher_ids,
+        "class_group_ids": class_group_ids,
+        "classroom_id": fragment.get("classroom_id"),
         "course_name": fragment.get("course_name"),
         "teacher_name": fragment.get("teacher_name"),
         "class_name": fragment.get("class_name"),
@@ -149,11 +202,17 @@ def _load_draft(input_dir: Path) -> dict[str, list[dict[str, Any]]]:
         "weeks": _read_jsonl(input_dir / "schedule_template_weeks.jsonl"),
         "fragments": _read_jsonl(input_dir / "schedule_template_fragments.jsonl"),
         "slots": _read_jsonl(input_dir / "schedule_template_fragment_slots.jsonl"),
+        "fragment_teachers": _read_jsonl_if_exists(input_dir / "schedule_template_fragment_teachers.jsonl"),
+        "fragment_class_groups": _read_jsonl_if_exists(input_dir / "schedule_template_fragment_class_groups.jsonl"),
     }
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
+    return _read_jsonl(path) if path.exists() else []
 
 
 def main() -> None:

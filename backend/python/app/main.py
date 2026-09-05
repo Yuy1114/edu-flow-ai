@@ -25,6 +25,7 @@ except ImportError:
     pass
 
 from app.api.v1.router import router as v1_router
+from app.api.v1.pipeline import initialize_pipeline_worker
 
 ML_DIR = Path(__file__).resolve().parents[1]
 
@@ -32,7 +33,10 @@ ML_DIR = Path(__file__).resolve().parents[1]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.ml_dir = ML_DIR
+    recovered_jobs = initialize_pipeline_worker()
     service.info("ML service started, ml_dir=%s", ML_DIR)
+    if recovered_jobs:
+        service.warning("Marked %s interrupted pipeline job(s) as failed", recovered_jobs)
     service_console.info("ML service started, ml_dir=%s", ML_DIR)
     yield
     service.info("ML service shutting down")
@@ -40,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Edu-Flow-AI ML Service",
-    description="V3 scheduling pipeline: Placement Model + CP-SAT Global Plan Selector.",
+    description="V3.5 scheduling pipeline: task patterns + phase templates + deterministic placement.",
     version="1.0.0",
     lifespan=lifespan,
 )

@@ -61,6 +61,15 @@ class DbRepositoriesTest(unittest.TestCase):
         self.assertEqual(conn.inserted, [])
         self.assertEqual(conn.commits, 0)
 
+    def test_default_time_axis_is_eighteen_weeks_by_ten_atomic_periods(self):
+        conn = FakeConnection()
+
+        inserted = ensure_default_time_slots(conn)
+
+        self.assertEqual(inserted, 18 * 7 * 10)
+        self.assertEqual(conn.inserted[0], (1, 1, 1, "第1周 周1 第1节"))
+        self.assertEqual(conn.inserted[-1], (18, 7, 10, "第18周 周7 第10节"))
+
 
 if __name__ == "__main__":
     unittest.main()

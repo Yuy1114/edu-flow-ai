@@ -1,24 +1,33 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, Request
 from app.core.logging import service
 
 from app.models.scheduling import HealthResponse
+from scheduler.placement_single_model import MODEL_PATH, OUTPUT_DIR, V35SinglePlacementModel
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
-    ml_dir: Path = request.app.state.ml_dir
-    model_path = ml_dir.parent / "models" / "v3.5" / "placement_single" / "single_resource_lgbm.txt"
-    available = model_path.exists()
-    service.debug("Health check: V3.5 model=%s available=%s", model_path, available)
+    ml_dir = request.app.state.ml_dir
+    model_error = None
+    try:
+        V35SinglePlacementModel.load(OUTPUT_DIR)
+        available = True
+    except Exception as exc:
+        available = False
+        model_error = str(exc)
+    service.debug(
+        "Health check: V3.5 model=%s available=%s reason=%s",
+        MODEL_PATH,
+        available,
+        model_error,
+    )
     return HealthResponse(
         status="ok",
         lightgbm_available=available,
-        model_path=str(model_path) if available else None,
+        model_path=str(MODEL_PATH) if available else None,
         ml_dir=str(ml_dir),
     )

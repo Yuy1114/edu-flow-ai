@@ -21,7 +21,7 @@ from scheduler.paths import OUTPUT_DIR as PLACEMENT_OUTPUT_DIR  # noqa: E402
 
 DEFAULT_REPORT_PATH = PLACEMENT_OUTPUT_DIR / "base_data_health_report.json"
 ACTIVE_STATUS = "ACTIVE"
-VALID_COURSE_TYPES = {"理论课", "上机课"}
+VALID_COURSE_TYPES = {"理论课", "上机课", "实验课", "实践课"}
 VALID_ROOM_TYPES = {"普通教室", "机房", "实验室"}
 
 

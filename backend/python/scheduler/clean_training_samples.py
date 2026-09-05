@@ -20,8 +20,9 @@ DEFAULT_OUTPUT_PATH = MODELS_DIR / "clean_training_samples.jsonl"
 DEFAULT_DROPPED_PATH = MODELS_DIR / "dropped_training_samples.jsonl"
 DEFAULT_REPORT_PATH = MODELS_DIR / "clean_training_report.json"
 
-ALLOWED_COURSE_TYPES = {"理论课", "上机课"}
+ALLOWED_COURSE_TYPES = {"理论课", "上机课", "实验课", "实践课"}
 ALLOWED_ROOM_TYPES = {"普通教室", "机房"}
+MAX_ATOMIC_PERIOD_INDEX = 10
 REQUIRED_FIELDS = [
     "source_key",
     "resource_key",
@@ -110,7 +111,7 @@ def _drop_reasons(row: dict[str, Any]) -> list[str]:
         reasons.append("invalid_period_index")
     if _safe_int(row.get("day_of_week")) > 7:
         reasons.append("invalid_day_of_week")
-    if _safe_int(row.get("period_index")) > 5:
+    if _safe_int(row.get("period_index")) > MAX_ATOMIC_PERIOD_INDEX:
         reasons.append("invalid_period_index")
 
     if not room:
