@@ -18,12 +18,27 @@ from scheduler.export_template_cover_db_draft import DEFAULT_OUTPUT_DIR
 DEFAULT_QUERY_OUTPUT = DEFAULT_OUTPUT_DIR / "week_query_result.json"
 DEFAULT_SWAP_OUTPUT = DEFAULT_OUTPUT_DIR / "week_swap_simulation.json"
 
+QUERY_OUTPUT_NAME = "week_query_result.json"
+SWAP_OUTPUT_NAME = "week_swap_simulation.json"
 
-def query_week(*, input_dir: Path = DEFAULT_OUTPUT_DIR, week_number: int, output_path: Path | None = DEFAULT_QUERY_OUTPUT) -> dict[str, Any]:
+# Sentinel meaning "write next to input_dir". A run passes its own db_draft
+# directory as input_dir, so the result belongs in that run's directory; an
+# explicit path overrides, and None suppresses the write entirely.
+_ALONGSIDE_INPUT = object()
+
+
+def _write(output_path: Path, result: dict[str, Any]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def query_week(*, input_dir: Path = DEFAULT_OUTPUT_DIR, week_number: int, output_path: Path | None = _ALONGSIDE_INPUT) -> dict[str, Any]:
     data = _load_draft(input_dir)
     result = _query_week_from_data(data, week_number)
+    if output_path is _ALONGSIDE_INPUT:
+        output_path = Path(input_dir) / QUERY_OUTPUT_NAME
     if output_path:
-        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write(Path(output_path), result)
     return result
 
 
@@ -32,7 +47,7 @@ def simulate_swap(
     input_dir: Path = DEFAULT_OUTPUT_DIR,
     week_a: int,
     week_b: int,
-    output_path: Path = DEFAULT_SWAP_OUTPUT,
+    output_path: Path | None = _ALONGSIDE_INPUT,
 ) -> dict[str, Any]:
     data = _load_draft(input_dir)
     before_a = query_week(input_dir=input_dir, week_number=week_a, output_path=None)
@@ -71,7 +86,10 @@ def simulate_swap(
             str(week_b): after_b["entries"][:20],
         },
     }
-    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if output_path is _ALONGSIDE_INPUT:
+        output_path = Path(input_dir) / SWAP_OUTPUT_NAME
+    if output_path:
+        _write(Path(output_path), result)
     return result
 
 
