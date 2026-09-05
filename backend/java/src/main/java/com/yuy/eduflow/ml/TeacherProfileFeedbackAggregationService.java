@@ -6,6 +6,7 @@ import com.yuy.eduflow.teachingtask.TeachingTask;
 import com.yuy.eduflow.teachingtask.TeachingTaskMapper;
 import com.yuy.eduflow.timeslot.TimeSlot;
 import com.yuy.eduflow.timeslot.TimeSlotService;
+import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -220,11 +221,15 @@ public class TeacherProfileFeedbackAggregationService {
             if (!preferredPeriods.isEmpty()) {
                 profile.put("preferred_periods", preferredPeriods);
             }
-            if (negativePeriods.getOrDefault(1, 0) >= Math.max(2, positivePeriods.getOrDefault(1, 0) + 1)) {
+            int earlyNegative = negativePeriods.getOrDefault(1, 0) + negativePeriods.getOrDefault(2, 0);
+            int earlyPositive = positivePeriods.getOrDefault(1, 0) + positivePeriods.getOrDefault(2, 0);
+            if (earlyNegative >= Math.max(2, earlyPositive + 1)) {
                 profile.put("avoid_early_period", true);
             }
-            int lateNegative = negativePeriods.getOrDefault(5, 0) + negativePeriods.getOrDefault(6, 0);
-            int latePositive = positivePeriods.getOrDefault(5, 0) + positivePeriods.getOrDefault(6, 0);
+            int lateNegative = negativePeriods.getOrDefault(SchedulingTimePolicy.EVENING_FIRST_PERIOD, 0)
+                + negativePeriods.getOrDefault(SchedulingTimePolicy.LAST_PERIOD, 0);
+            int latePositive = positivePeriods.getOrDefault(SchedulingTimePolicy.EVENING_FIRST_PERIOD, 0)
+                + positivePeriods.getOrDefault(SchedulingTimePolicy.LAST_PERIOD, 0);
             if (lateNegative >= Math.max(2, latePositive + 1)) {
                 profile.put("avoid_late_period", true);
             }

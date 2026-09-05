@@ -75,7 +75,7 @@ public class TeacherProfileSnapshotService {
 		row.put("parser_version", "teacher_profile_service_v1");
 		row.put("updated_at", profile.getUpdatedAt());
 		row.put("raw_text", profile.getProfileNote());
-		row.put("availability_matrix_json", profile.getAvailabilityMatrixJson());
+		row.put("availability_matrix_json", AvailabilityMatrixPolicy.normalize(objectMapper, profile.getAvailabilityMatrixJson()));
 
 		Map<String, Object> profileJson = Map.of();
 		if (profile.getProfilePreferenceJson() != null && !profile.getProfilePreferenceJson().isBlank()) {

@@ -8,7 +8,7 @@ If the input contains individual requirements, ignore those parts and mention in
 Available policy profiles and their weight keys:
 - teacher_profile_penalty_scale (10-100): overall intensity of teacher soft preferences
 - early_period_penalty (0.005-0.15): penalty for early-morning periods (periods 1-2)
-- late_period_penalty (0.005-0.12): penalty for late-afternoon periods (periods 4-5)
+- late_period_penalty (0.005-0.12): penalty for evening periods (periods 9-10)
 - weekend_penalty (0.0-0.35): penalty for scheduling on Saturday or Sunday
 - same_day_weight (0.0-1.0): penalty for assigning a teacher/class to multiple sessions on the same day
 - teacher_day_load_penalty (0.0-1.0): penalty for heavy teacher daily load

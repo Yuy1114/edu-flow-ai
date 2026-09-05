@@ -13,6 +13,8 @@ import com.yuy.eduflow.teachingtask.TeachingTask;
 import com.yuy.eduflow.teachingtask.TeachingTaskMapper;
 import com.yuy.eduflow.timeslot.TimeSlot;
 import com.yuy.eduflow.timeslot.TimeSlotService;
+import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
+import com.yuy.eduflow.timeslot.TeachingSessionTimePolicy;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -69,33 +71,7 @@ public class AllocationItemService {
 	}
 
 	public List<AllocationItemView> moveAndRecheck(Long schemeId, Long itemId, AllocationItemMoveRequest request) {
-		log.info("Moving item: schemeId={}, itemId={}, new classroomId={}, new timeSlotId={}",
-			schemeId, itemId, request.classroomId(), request.timeSlotId());
-
-		classroomService.findById(request.classroomId());
-		timeSlotService.findById(request.timeSlotId());
-		AllocationItem item = findById(itemId);
-		if (!item.getSchemeId().equals(schemeId)) {
-			throw new ValidationException("该明细不属于此方案");
-		}
-		AllocationItem beforeItem = copyItem(item);
-
-		Long fromClassroomId = item.getClassroomId();
-		Long fromTimeSlotId = item.getTimeSlotId();
-		item.setClassroomId(request.classroomId());
-		item.setTimeSlotId(request.timeSlotId());
-		allocationItemMapper.update(item);
-		AllocationItemAdjustmentLog adjustmentLog = recordAdjustment(item, fromClassroomId, fromTimeSlotId, request);
-
-		List<AllocationItemView> views = recheckScheme(schemeId);
-		feedbackEventService.recordItemMoved(
-			schemeId,
-			beforeItem,
-			findById(itemId),
-			adjustmentLog == null ? null : adjustmentLog.getId(),
-			adjustmentLog == null ? null : adjustmentLog.getReason()
-		);
-		return views;
+		throw legacyWriteDisabled();
 	}
 
 	private AllocationItem copyItem(AllocationItem source) {
@@ -192,9 +168,7 @@ public class AllocationItemService {
 	}
 
 	public AllocationScheme reevaluateScheme(Long schemeId) {
-		findBySchemeId(schemeId);
-		recheckScheme(schemeId);
-		return allocationSchemeMapper.findById(schemeId);
+		throw legacyWriteDisabled();
 	}
 
 	private AllocationScheme findBySchemeId(Long schemeId) {
@@ -269,11 +243,11 @@ public class AllocationItemService {
 		List<String> reasons = new ArrayList<>();
 		Integer day = slot.getDayOfWeek();
 		Integer period = slot.getPeriodIndex();
-		if (Boolean.TRUE.equals(preference.get("avoidFirstPeriod")) && period != null && period == 1) {
-			reasons.add("教师偏好避开第1节");
+		if (Boolean.TRUE.equals(preference.get("avoidFirstPeriod")) && period != null && period <= 2) {
+			reasons.add("教师偏好避开早间第1-2节");
 		}
-		if (Boolean.TRUE.equals(preference.get("avoidLastPeriod")) && period != null && period == 5) {
-			reasons.add("教师偏好避开第5节");
+		if (Boolean.TRUE.equals(preference.get("avoidLastPeriod")) && period != null && SchedulingTimePolicy.isEvening(period)) {
+			reasons.add("教师偏好避开晚间第9-10节");
 		}
 		Object preferredWeekdays = preference.get("preferredWeekdays");
 		if (preferredWeekdays instanceof List<?> list && !list.isEmpty() && day != null) {
@@ -472,21 +446,19 @@ public class AllocationItemService {
 	}
 
 	public AllocationItem create(AllocationItemRequest request) {
-		AllocationItem item = toItem(new AllocationItem(), request);
-		allocationItemMapper.insert(item);
-		return findById(item.getId());
+		throw legacyWriteDisabled();
 	}
 
 	public AllocationItem update(Long id, AllocationItemRequest request) {
-		AllocationItem existing = findById(id);
-		AllocationItem item = toItem(existing, request);
-		allocationItemMapper.update(item);
-		return findById(id);
+		throw legacyWriteDisabled();
 	}
 
 	public void delete(Long id) {
-		findById(id);
-		allocationItemMapper.delete(id);
+		throw legacyWriteDisabled();
+	}
+
+	private ValidationException legacyWriteDisabled() {
+		return new ValidationException("第一阶段旧版allocation_item链路只读；请使用V3.5模板草案片段接口编辑和重审计");
 	}
 
 	private AllocationItem toItem(AllocationItem item, AllocationItemRequest request) {
@@ -494,6 +466,7 @@ public class AllocationItemService {
 		Assert.positiveId(request.teachingTaskId(), "教学任务ID");
 		Assert.positiveId(request.classroomId(), "教室ID");
 		Assert.positiveId(request.timeSlotId(), "时间段ID");
+		validateTeachingSessionBlock(request.teachingTaskId(), request.timeSlotId());
 		item.setSchemeId(request.schemeId());
 		item.setTeachingTaskId(request.teachingTaskId());
 		item.setClassroomId(request.classroomId());
@@ -501,6 +474,26 @@ public class AllocationItemService {
 		item.setValid(request.valid() != null ? request.valid() : true);
 		item.setConflictMessage(clean(request.conflictMessage()));
 		return item;
+	}
+
+	private void validateTeachingSessionBlock(Long teachingTaskId, Long timeSlotId) {
+		TeachingTask task = teachingTaskMapper.findWithDetails(teachingTaskId);
+		if (task == null) {
+			throw new ResourceNotFoundException("教学任务不存在");
+		}
+		TimeSlot slot = timeSlotService.findById(timeSlotId);
+		String courseType = task.getCourse() == null ? null : task.getCourse().getCourseType();
+		int periodCount = TeachingSessionTimePolicy.periodCount(courseType);
+		if (periodCount == 0) {
+			throw new ValidationException("教学任务课程类型缺失或不支持，无法确定一次课占用2节还是4节");
+		}
+		if (!TeachingSessionTimePolicy.isLegalStartPeriod(slot.getPeriodIndex(), periodCount)) {
+			throw new ValidationException(
+				courseType + "一次课占连续" + periodCount + "节，起始节次只能是"
+					+ TeachingSessionTimePolicy.legalStartDescription(periodCount)
+					+ "，不能跨上午、下午或晚间边界"
+			);
+		}
 	}
 
 	private void validateOptionalId(Long id, String message) {

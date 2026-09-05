@@ -27,32 +27,31 @@ public class TimeSlotService {
 	}
 
 	public TimeSlot create(TimeSlotRequest request) {
-		TimeSlot timeSlot = toTimeSlot(new TimeSlot(), request);
-		timeSlotMapper.insert(timeSlot);
-		return findById(timeSlot.getId());
+		throw canonicalCatalogIsReadOnly();
 	}
 
 	public TimeSlot update(Long id, TimeSlotRequest request) {
-		findById(id);
-		TimeSlot timeSlot = toTimeSlot(new TimeSlot(), request);
-		timeSlot.setId(id);
-		timeSlotMapper.update(timeSlot);
-		return findById(id);
+		throw canonicalCatalogIsReadOnly();
 	}
 
 	public void delete(Long id) {
-		findById(id);
-		timeSlotMapper.delete(id);
+		throw canonicalCatalogIsReadOnly();
+	}
+
+	private ValidationException canonicalCatalogIsReadOnly() {
+		return new ValidationException(
+			"标准时间槽目录固定为18周×7天×10个45分钟原子节（4+4+2），运行期只读；请通过数据库迁移维护"
+		);
 	}
 
 	private TimeSlot toTimeSlot(TimeSlot timeSlot, TimeSlotRequest request) {
 		if (request.weekNumber() == null) {
 			throw new ValidationException("周次不能为空");
 		}
-		if (request.weekNumber() < 1) {
+		if (request.weekNumber() < SchedulingTimePolicy.FIRST_WEEK) {
 			throw new ValidationException("周次必须大于0");
 		}
-		if (request.weekNumber() > 18) {
+		if (request.weekNumber() > SchedulingTimePolicy.LAST_WEEK) {
 			throw new ValidationException("周次必须在1到18之间");
 		}
 		if (request.dayOfWeek() == null) {
@@ -64,11 +63,11 @@ public class TimeSlotService {
 		if (request.periodIndex() == null) {
 			throw new ValidationException("节次不能为空");
 		}
-		if (request.periodIndex() < 1) {
+		if (request.periodIndex() < SchedulingTimePolicy.FIRST_PERIOD) {
 			throw new ValidationException("节次必须大于0");
 		}
-		if (request.periodIndex() > 6) {
-			throw new ValidationException("节次必须在1到6之间");
+		if (request.periodIndex() > SchedulingTimePolicy.LAST_PERIOD) {
+			throw new ValidationException("节次必须在1到10之间");
 		}
 		if (!StringUtils.hasText(request.label())) {
 			throw new ValidationException("时间段标签不能为空");

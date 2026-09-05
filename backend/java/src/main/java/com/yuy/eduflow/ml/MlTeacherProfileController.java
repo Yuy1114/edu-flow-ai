@@ -9,6 +9,7 @@ import com.yuy.eduflow.common.ApiResponse;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.teacher.TeacherProfile;
 import com.yuy.eduflow.teacher.TeacherProfileMapper;
+import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -138,8 +139,11 @@ public class MlTeacherProfileController {
         List<Integer> preferredPeriods = intList(finalProfile.get("preferred_periods"));
         int maxDailyLessons = (int) number(finalProfile.get("max_daily_lessons"));
 
-        long earlyCount = items.stream().filter(item -> value(item.getPeriodIndex()) == 1).count();
-        long lateCount = items.stream().filter(item -> value(item.getPeriodIndex()) == 5).count();
+        long earlyCount = items.stream().filter(item -> {
+            int period = value(item.getPeriodIndex());
+            return period >= SchedulingTimePolicy.FIRST_PERIOD && period <= 2;
+        }).count();
+        long lateCount = items.stream().filter(item -> SchedulingTimePolicy.isEvening(value(item.getPeriodIndex()))).count();
         long weekdayHits = preferredWeekdays.isEmpty()
             ? total
             : items.stream().filter(item -> preferredWeekdays.contains(value(item.getDayOfWeek()))).count();
