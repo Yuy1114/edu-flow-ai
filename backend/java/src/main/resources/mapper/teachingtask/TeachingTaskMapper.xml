@@ -20,6 +20,7 @@
         <result property="course.name" column="course_name"/>
         <result property="course.courseType" column="course_type"/>
         <result property="course.requiredRoomType" column="course_required_room_type"/>
+        <result property="course.status" column="course_status"/>
         <!-- primaryTeacher -->
         <result property="primaryTeacher.id" column="pt_id"/>
         <result property="primaryTeacher.name" column="pt_name"/>
@@ -40,6 +41,8 @@
     <resultMap id="teachingTaskDetailMap" extends="teachingTaskResultMap" type="com.yuy.eduflow.teachingtask.TeachingTask">
         <collection property="classGroups" column="id" ofType="com.yuy.eduflow.classgroup.ClassGroup"
                     select="findClassGroups"/>
+        <collection property="candidateClassrooms" column="id" ofType="com.yuy.eduflow.classroom.Classroom"
+                    select="findClassrooms"/>
     </resultMap>
 
     <!-- Reusable SQL fragment for the 5-table LEFT JOIN -->
@@ -50,6 +53,7 @@
                t.created_at, t.updated_at,
                c.id AS course_id2, c.name AS course_name,
                c.course_type, c.required_room_type AS course_required_room_type,
+               c.status AS course_status,
                pt.id AS pt_id, pt.name AS pt_name, pt.employee_no AS pt_employee_no, pt.department AS pt_dept,
                at.id AS at_id, at.name AS at_name,
                cr.id AS cr_id, cr.name AS cr_name, cr.building AS cr_building, cr.capacity AS cr_capacity, cr.classroom_type AS cr_classroom_type

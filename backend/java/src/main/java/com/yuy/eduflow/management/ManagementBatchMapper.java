@@ -24,6 +24,71 @@ public interface ManagementBatchMapper {
 
     @Select("""
             <script>
+            SELECT COUNT(*) FROM course_assignment
+            WHERE teaching_task_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int countAssignmentHistoryByTeachingTaskIds(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*)
+            FROM course_assignment ca
+            JOIN teaching_task tt ON tt.id = ca.teaching_task_id
+            WHERE tt.course_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int countAssignmentHistoryByCourseIds(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*)
+            FROM course_assignment ca
+            JOIN teaching_task tt ON tt.id = ca.teaching_task_id
+            WHERE tt.primary_teacher_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            OR tt.assistant_teacher_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int countAssignmentHistoryByTeacherIds(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*) FROM course_assignment
+            WHERE classroom_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int countAssignmentHistoryByClassroomIds(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*)
+            FROM course_assignment ca
+            JOIN teaching_task_class_group ttcg ON ttcg.teaching_task_id = ca.teaching_task_id
+            WHERE ttcg.class_group_id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int countAssignmentHistoryByClassGroupIds(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
             SELECT id
             FROM teaching_task
             WHERE course_id IN
@@ -93,31 +158,6 @@ public interface ManagementBatchMapper {
             </script>
             """)
     int deleteAllocationItems(@Param("ids") List<Long> ids);
-
-    @Delete("""
-            <script>
-            DELETE FROM adjustment_request
-            WHERE assignment_id IN (
-                SELECT id FROM course_assignment
-                WHERE teaching_task_id IN
-                <foreach collection="ids" item="id" open="(" separator="," close=")">
-                    #{id}
-                </foreach>
-            )
-            </script>
-            """)
-    int deleteAdjustmentRequestsByTeachingTasks(@Param("ids") List<Long> ids);
-
-    @Delete("""
-            <script>
-            DELETE FROM course_assignment
-            WHERE teaching_task_id IN
-            <foreach collection="ids" item="id" open="(" separator="," close=")">
-                #{id}
-            </foreach>
-            </script>
-            """)
-    int deleteCourseAssignments(@Param("ids") List<Long> ids);
 
     @Update("""
             <script>

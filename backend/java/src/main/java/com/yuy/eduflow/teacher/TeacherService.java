@@ -1,5 +1,6 @@
 package com.yuy.eduflow.teacher;
 
+import com.yuy.eduflow.assignment.FormalScheduleMutationGuard;
 import com.yuy.eduflow.common.exception.ConflictException;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.yuy.eduflow.enums.ActiveStatus;
 import org.springframework.util.StringUtils;
 
@@ -17,9 +19,11 @@ public class TeacherService {
 	private static final String DEFAULT_ROLE = "TEACHER";
 
 	private final TeacherMapper teacherMapper;
+	private final FormalScheduleMutationGuard formalScheduleMutationGuard;
 
-	public TeacherService(TeacherMapper teacherMapper) {
+	public TeacherService(TeacherMapper teacherMapper, FormalScheduleMutationGuard formalScheduleMutationGuard) {
 		this.teacherMapper = teacherMapper;
+		this.formalScheduleMutationGuard = formalScheduleMutationGuard;
 	}
 
 	public List<Teacher> findAll(String keyword, String status) {
@@ -53,15 +57,20 @@ public class TeacherService {
 		return findById(teacher.getId());
 	}
 
+	@Transactional
 	public Teacher update(Long id, TeacherRequest request) {
-		Teacher teacher = toTeacher(findById(id), request, false);
+		Teacher existing = findById(id);
+		formalScheduleMutationGuard.lockAndRejectTeacher(id);
+		Teacher teacher = toTeacher(existing, request, false);
 		ensureEmployeeNoAvailable(teacher.getEmployeeNo(), id);
 		teacherMapper.update(teacher);
 		return findById(id);
 	}
 
+	@Transactional
 	public void delete(Long id) {
 		findById(id);
+		formalScheduleMutationGuard.lockAndRejectTeacher(id);
 		teacherMapper.deactivate(id, ActiveStatus.INACTIVE.code());
 	}
 

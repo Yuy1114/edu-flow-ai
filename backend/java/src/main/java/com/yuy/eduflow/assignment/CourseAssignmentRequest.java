@@ -5,6 +5,7 @@ public record CourseAssignmentRequest(
 	Long teachingTaskId,
 	Long classroomId,
 	Long timeSlotId,
+	Integer consecutiveSlots,
 	String status
 ) {
 }

@@ -1,5 +1,6 @@
 package com.yuy.eduflow.teacher;
 
+import com.yuy.eduflow.assignment.FormalScheduleMutationGuard;
 import com.yuy.eduflow.common.exception.BusinessException;
 import com.yuy.eduflow.llm.OpenAiChatClient;
 import java.util.LinkedHashMap;
@@ -7,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import tools.jackson.databind.ObjectMapper;
 
@@ -17,22 +19,29 @@ public class TeacherProfileService {
 	private final TeacherProfileMapper teacherProfileMapper;
     private final OpenAiChatClient chatClient;
     private final ObjectMapper objectMapper;
+	private final FormalScheduleMutationGuard formalScheduleMutationGuard;
 
 	public TeacherProfileService(
 		TeacherService teacherService,
-		TeacherProfileMapper teacherProfileMapper,
+        TeacherProfileMapper teacherProfileMapper,
         OpenAiChatClient chatClient,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+		FormalScheduleMutationGuard formalScheduleMutationGuard
 	) {
 		this.teacherService = teacherService;
 		this.teacherProfileMapper = teacherProfileMapper;
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
+		this.formalScheduleMutationGuard = formalScheduleMutationGuard;
 	}
 
 	public TeacherProfile findByTeacherId(Long teacherId) {
 		teacherService.findById(teacherId);
-		return teacherProfileMapper.findByTeacherId(teacherId);
+		TeacherProfile profile = teacherProfileMapper.findByTeacherId(teacherId);
+		if (profile != null) {
+			profile.setAvailabilityMatrixJson(AvailabilityMatrixPolicy.normalize(objectMapper, profile.getAvailabilityMatrixJson()));
+		}
+		return profile;
 	}
 
     public TeacherProfileParseResult parseProfile(Long teacherId, TeacherProfileParseRequest request) {
@@ -56,7 +65,7 @@ public class TeacherProfileService {
             教师：%s
             固定周矩阵 JSON：%s
             其他说明：%s
-            """.formatted(teacher.getName(), clean(request.availabilityMatrixJson()), profileNote);
+            """.formatted(teacher.getName(), AvailabilityMatrixPolicy.normalize(objectMapper, request.availabilityMatrixJson()), profileNote);
         try {
             String raw = chatClient.generate(systemPrompt, userPrompt);
             @SuppressWarnings("unchecked")
@@ -71,6 +80,7 @@ public class TeacherProfileService {
         }
     }
 
+	@Transactional
 	public TeacherProfile save(Long teacherId, TeacherProfileRequest request) {
         if (StringUtils.hasText(request.profileNote()) && !StringUtils.hasText(request.profilePreferenceJson())) {
             throw new BusinessException(400, "请先通过 LLM 解析并确认其他说明，再保存教师画像");
@@ -78,6 +88,7 @@ public class TeacherProfileService {
 		log.info("=== save() start === teacherId={}", teacherId);
 		log.info("request={}", request);
 		Teacher teacher = teacherService.findById(teacherId);
+		formalScheduleMutationGuard.lockAndRejectTeacher(teacherId);
 		log.info("teacher found: id={}, name={}", teacher.getId(), teacher.getName());
 		TeacherProfile profile = toProfile(teacher, request);
 		TeacherProfile existing = teacherProfileMapper.findByTeacherId(teacherId);
@@ -97,7 +108,7 @@ public class TeacherProfileService {
     private TeacherProfile toProfile(Teacher teacher, TeacherProfileRequest request) {
         TeacherProfile profile = new TeacherProfile();
         profile.setTeacherId(teacher.getId());
-        profile.setAvailabilityMatrixJson(clean(request.availabilityMatrixJson()));
+        profile.setAvailabilityMatrixJson(AvailabilityMatrixPolicy.normalize(objectMapper, request.availabilityMatrixJson()));
         profile.setProfileNote(clean(request.profileNote()));
         profile.setProfilePreferenceJson(clean(request.profilePreferenceJson()));
         return profile;

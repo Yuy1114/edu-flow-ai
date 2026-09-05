@@ -1,19 +1,23 @@
 package com.yuy.eduflow.classgroup;
 
+import com.yuy.eduflow.assignment.FormalScheduleMutationGuard;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
 public class ClassGroupService {
 	private final ClassGroupMapper classGroupMapper;
+	private final FormalScheduleMutationGuard formalScheduleMutationGuard;
 
-	public ClassGroupService(ClassGroupMapper classGroupMapper) {
+	public ClassGroupService(ClassGroupMapper classGroupMapper, FormalScheduleMutationGuard formalScheduleMutationGuard) {
 		this.classGroupMapper = classGroupMapper;
+		this.formalScheduleMutationGuard = formalScheduleMutationGuard;
 	}
 
 	public List<ClassGroup> findAll(String keyword) {
@@ -46,16 +50,20 @@ public class ClassGroupService {
 		return findById(classGroup.getId());
 	}
 
+	@Transactional
 	public ClassGroup update(Long id, ClassGroupRequest request) {
 		findById(id);
+		formalScheduleMutationGuard.lockAndRejectClassGroup(id);
 		ClassGroup classGroup = toClassGroup(new ClassGroup(), request, id);
 		classGroup.setId(id);
 		classGroupMapper.update(classGroup);
 		return findById(id);
 	}
 
+	@Transactional
 	public void delete(Long id) {
 		findById(id);
+		formalScheduleMutationGuard.lockAndRejectClassGroup(id);
 		if (classGroupMapper.countTeachingTaskRefs(id) > 0) {
 			throw new ValidationException("班级已被教学任务引用，不能删除");
 		}

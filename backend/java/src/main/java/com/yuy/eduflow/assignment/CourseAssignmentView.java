@@ -20,6 +20,7 @@ public class CourseAssignmentView {
 	private Integer weekNumber;
 	private Integer dayOfWeek;
 	private Integer periodIndex;
+	private Integer consecutiveSlots;
 	private Long sourceSchemeId;
     private AssignmentStatus status;
 }

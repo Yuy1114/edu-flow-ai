@@ -16,6 +16,8 @@ public class CourseAssignment {
 	private Long teachingTaskId;
 	private Long classroomId;
 	private Long timeSlotId;
+	/** 一次课实际占用的45分钟原子节次数；人工补尾课时允许为1。 */
+	private Integer consecutiveSlots;
     private AssignmentStatus status;
 	private LocalDateTime createdAt;
 	private LocalDateTime updatedAt;

@@ -14,5 +14,6 @@ public record TeachingTaskRequest(
         String taskBatch,
         String notes,
         String status,
-        List<Long> classGroupIds) {
+        List<Long> classGroupIds,
+        List<Long> candidateClassroomIds) {
 }

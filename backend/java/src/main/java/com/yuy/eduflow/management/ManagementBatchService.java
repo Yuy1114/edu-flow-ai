@@ -1,5 +1,7 @@
 package com.yuy.eduflow.management;
 
+import com.yuy.eduflow.assignment.FormalScheduleMutationGuard;
+import com.yuy.eduflow.common.exception.ConflictException;
 import com.yuy.eduflow.common.exception.ValidationException;
 import com.yuy.eduflow.enums.ActiveStatus;
 import java.util.List;
@@ -19,9 +21,13 @@ public class ManagementBatchService {
     );
 
     private final ManagementBatchMapper mapper;
+    private final FormalScheduleMutationGuard formalScheduleMutationGuard;
 
-    public ManagementBatchService(ManagementBatchMapper mapper) {
+    public ManagementBatchService(
+            ManagementBatchMapper mapper,
+            FormalScheduleMutationGuard formalScheduleMutationGuard) {
         this.mapper = mapper;
+        this.formalScheduleMutationGuard = formalScheduleMutationGuard;
     }
 
     @Transactional
@@ -31,6 +37,7 @@ public class ManagementBatchService {
             throw new ValidationException("该数据类型暂不支持禁用");
         }
         List<Long> normalizedIds = normalizeIds(ids);
+        rejectPublishedReferences(target, normalizedIds);
         return mapper.updateStatus(target.tableName(), normalizedIds, ActiveStatus.INACTIVE.code());
     }
 
@@ -38,6 +45,8 @@ public class ManagementBatchService {
     public int delete(String entity, List<Long> ids) {
         EntityTarget target = target(entity);
         List<Long> normalizedIds = normalizeIds(ids);
+        rejectPublishedReferences(target, normalizedIds);
+        rejectFormalHistoryDeletion(target, normalizedIds);
         if ("teaching_task".equals(target.tableName())) {
             deleteTeachingTaskDependencies(normalizedIds);
         }
@@ -68,8 +77,48 @@ public class ManagementBatchService {
         mapper.deleteAllocationTaskTeachingTasks(ids);
         mapper.deleteAllocationItemAdjustmentLogs(ids);
         mapper.deleteAllocationItems(ids);
-        mapper.deleteAdjustmentRequestsByTeachingTasks(ids);
-        mapper.deleteCourseAssignments(ids);
+        // course_assignment is the immutable formal timetable ledger. A hard
+        // delete must never erase it (or its adjustment history). If inactive
+        // history still references this task, the teaching_task FK rejects the
+        // final delete and Spring rolls this whole transaction back.
+    }
+
+    /**
+     * Check the complete batch before the first mutation. Every guard call
+     * acquires the global publication row lock and checks ACTIVE formal
+     * assignments on the same Spring transaction/connection. This serializes
+     * the check with concurrent scheme confirmation.
+     */
+    private void rejectPublishedReferences(EntityTarget target, List<Long> ids) {
+        for (Long id : ids) {
+            switch (target.tableName()) {
+                case "teacher" -> formalScheduleMutationGuard.lockAndRejectTeacher(id);
+                case "classroom" -> formalScheduleMutationGuard.lockAndRejectClassroom(id);
+                case "course" -> formalScheduleMutationGuard.lockAndRejectCourse(id);
+                case "class_group" -> formalScheduleMutationGuard.lockAndRejectClassGroup(id);
+                case "teaching_task" -> formalScheduleMutationGuard.lockAndRejectTeachingTask(id);
+                default -> throw new IllegalStateException("未配置正式课表冻结规则: " + target.tableName());
+            }
+        }
+    }
+
+    /**
+     * Inactive assignments remain part of the formal timetable audit ledger.
+     * They no longer freeze ordinary edits, but their referenced master data
+     * still cannot be hard-deleted.
+     */
+    private void rejectFormalHistoryDeletion(EntityTarget target, List<Long> ids) {
+        int historyCount = switch (target.tableName()) {
+            case "teacher" -> mapper.countAssignmentHistoryByTeacherIds(ids);
+            case "classroom" -> mapper.countAssignmentHistoryByClassroomIds(ids);
+            case "course" -> mapper.countAssignmentHistoryByCourseIds(ids);
+            case "class_group" -> mapper.countAssignmentHistoryByClassGroupIds(ids);
+            case "teaching_task" -> mapper.countAssignmentHistoryByTeachingTaskIds(ids);
+            default -> throw new IllegalStateException("未配置正式课表历史保护规则: " + target.tableName());
+        };
+        if (historyCount > 0) {
+            throw new ConflictException("选中数据存在正式课表历史记录；可禁用，但不能永久删除");
+        }
     }
 
     private EntityTarget target(String entity) {

@@ -1,9 +1,11 @@
 package com.yuy.eduflow.classroom;
 
+import com.yuy.eduflow.assignment.FormalScheduleMutationGuard;
 import com.yuy.eduflow.common.exception.ResourceNotFoundException;
 import com.yuy.eduflow.common.exception.ValidationException;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.yuy.eduflow.enums.ActiveStatus;
 import org.springframework.util.StringUtils;
 
@@ -12,9 +14,11 @@ public class ClassroomService {
 	
 
 	private final ClassroomMapper classroomMapper;
+	private final FormalScheduleMutationGuard formalScheduleMutationGuard;
 
-	public ClassroomService(ClassroomMapper classroomMapper) {
+	public ClassroomService(ClassroomMapper classroomMapper, FormalScheduleMutationGuard formalScheduleMutationGuard) {
 		this.classroomMapper = classroomMapper;
+		this.formalScheduleMutationGuard = formalScheduleMutationGuard;
 	}
 
 	public List<Classroom> findAll(String keyword, String status) {
@@ -35,16 +39,20 @@ public class ClassroomService {
 		return findById(classroom.getId());
 	}
 
+	@Transactional
 	public Classroom update(Long id, ClassroomRequest request) {
 		findById(id);
+		formalScheduleMutationGuard.lockAndRejectClassroom(id);
 		Classroom classroom = toClassroom(new Classroom(), request);
 		classroom.setId(id);
 		classroomMapper.update(classroom);
 		return findById(id);
 	}
 
+	@Transactional
 	public void delete(Long id) {
 		findById(id);
+		formalScheduleMutationGuard.lockAndRejectClassroom(id);
 		classroomMapper.deactivate(id, ActiveStatus.INACTIVE.code());
 	}
 

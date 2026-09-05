@@ -31,5 +31,6 @@ public class TeachingTask {
     private Teacher primaryTeacher;
     private Teacher assistantTeacher;
     private Classroom classroom;
+    private List<Classroom> candidateClassrooms;
     private List<ClassGroup> classGroups;
 }

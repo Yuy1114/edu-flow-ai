@@ -2,91 +2,109 @@ package com.yuy.eduflow.maintenance;
 
 import java.util.List;
 import java.util.Map;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface MaintenanceCleanupMapper {
-    @Update("SET FOREIGN_KEY_CHECKS = #{enabled}")
-    void setForeignKeyChecks(@Param("enabled") int enabled);
-
     @Select("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = #{tableName}")
     int tableExists(@Param("tableName") String tableName);
 
-    @Update("TRUNCATE TABLE allocation_item_adjustment_log")
-    void truncateAllocationItemAdjustmentLog();
+    @Delete("DELETE FROM allocation_item_adjustment_log")
+    void deleteAllAllocationItemAdjustmentLogs();
 
-    @Update("TRUNCATE TABLE adjustment_request")
-    void truncateAdjustmentRequest();
+    @Delete("DELETE FROM adjustment_request")
+    void deleteAllAdjustmentRequests();
 
-    @Update("TRUNCATE TABLE conflict_check_result")
-    void truncateConflictCheckResult();
+    @Delete("DELETE FROM conflict_check_result")
+    void deleteAllConflictCheckResults();
 
-    @Update("TRUNCATE TABLE course_assignment")
-    void truncateCourseAssignment();
+    @Delete("DELETE FROM course_assignment")
+    void deleteAllCourseAssignments();
 
-    @Update("TRUNCATE TABLE allocation_scheme_feedback")
-    void truncateAllocationSchemeFeedback();
+    @Delete("DELETE FROM allocation_scheme_feedback")
+    void deleteAllAllocationSchemeFeedback();
 
-    @Update("TRUNCATE TABLE ml_feedback_event")
-    void truncateMlFeedbackEvent();
+    @Delete("DELETE FROM ml_feedback_event")
+    void deleteAllMlFeedbackEvents();
 
-    @Update("TRUNCATE TABLE model_training_log")
-    void truncateModelTrainingLog();
+    @Delete("DELETE FROM model_training_log")
+    void deleteAllModelTrainingLogs();
 
-    @Update("TRUNCATE TABLE allocation_item")
-    void truncateAllocationItem();
+    @Delete("DELETE FROM ml_training_log")
+    void deleteAllLegacyMlTrainingLogs();
 
-    @Update("TRUNCATE TABLE allocation_scheme")
-    void truncateAllocationScheme();
+    @Delete("DELETE FROM allocation_item")
+    void deleteAllAllocationItems();
 
-    @Update("TRUNCATE TABLE allocation_task_generation_config")
-    void truncateAllocationTaskGenerationConfig();
+    @Delete("DELETE FROM schedule_timetable_entry")
+    void deleteAllScheduleTimetableEntries();
 
-    @Update("TRUNCATE TABLE allocation_task_teaching_task")
-    void truncateAllocationTaskTeachingTask();
+    @Delete("DELETE FROM schedule_template_fragment_week")
+    void deleteAllScheduleTemplateFragmentWeeks();
 
-    @Update("TRUNCATE TABLE allocation_task")
-    void truncateAllocationTask();
+    @Delete("DELETE FROM schedule_template_fragment_slot")
+    void deleteAllScheduleTemplateFragmentSlots();
 
-    @Update("TRUNCATE TABLE schedule_template_fragment_slot")
-    void truncateScheduleTemplateFragmentSlot();
+    @Delete("DELETE FROM schedule_template_fragment_teacher")
+    void deleteAllScheduleTemplateFragmentTeachers();
 
-    @Update("TRUNCATE TABLE schedule_template_week")
-    void truncateScheduleTemplateWeek();
+    @Delete("DELETE FROM schedule_template_fragment_class_group")
+    void deleteAllScheduleTemplateFragmentClassGroups();
 
-    @Update("TRUNCATE TABLE schedule_template_fragment")
-    void truncateScheduleTemplateFragment();
+    @Delete("DELETE FROM schedule_template_week")
+    void deleteAllScheduleTemplateWeeks();
 
-    @Update("TRUNCATE TABLE schedule_template")
-    void truncateScheduleTemplate();
+    @Delete("DELETE FROM schedule_template_fragment")
+    void deleteAllScheduleTemplateFragments();
 
-    @Update("TRUNCATE TABLE teaching_task_classroom")
-    void truncateTeachingTaskClassroom();
+    @Delete("DELETE FROM schedule_template")
+    void deleteAllScheduleTemplates();
 
-    @Update("TRUNCATE TABLE teaching_task_class_group")
-    void truncateTeachingTaskClassGroup();
+    @Delete("DELETE FROM schedule_generation_run")
+    void deleteAllScheduleGenerationRuns();
 
-    @Update("TRUNCATE TABLE teaching_task")
-    void truncateTeachingTask();
+    @Delete("DELETE FROM allocation_scheme")
+    void deleteAllAllocationSchemes();
 
-    @Update("TRUNCATE TABLE teacher_profile")
-    void truncateTeacherProfile();
+    @Delete("DELETE FROM allocation_task_generation_config")
+    void deleteAllAllocationTaskGenerationConfigs();
 
-    @Update("TRUNCATE TABLE course")
-    void truncateCourse();
+    @Delete("DELETE FROM allocation_task_teaching_task")
+    void deleteAllAllocationTaskTeachingTasks();
 
-    @Update("TRUNCATE TABLE classroom")
-    void truncateClassroom();
+    @Delete("DELETE FROM allocation_task")
+    void deleteAllAllocationTasks();
 
-    @Update("TRUNCATE TABLE class_group")
-    void truncateClassGroup();
+    @Delete("DELETE FROM teaching_task_classroom")
+    void deleteAllTeachingTaskClassrooms();
 
-    @Update("TRUNCATE TABLE teacher")
-    void truncateTeacher();
+    @Delete("DELETE FROM teaching_task_class_group")
+    void deleteAllTeachingTaskClassGroups();
+
+    @Delete("DELETE FROM teaching_task")
+    void deleteAllTeachingTasks();
+
+    @Delete("DELETE FROM teacher_profile")
+    void deleteAllTeacherProfiles();
+
+    @Delete("DELETE FROM teacher_department")
+    void deleteAllTeacherDepartments();
+
+    @Delete("DELETE FROM course")
+    void deleteAllCourses();
+
+    @Delete("DELETE FROM classroom")
+    void deleteAllClassrooms();
+
+    @Delete("DELETE FROM class_group")
+    void deleteAllClassGroups();
+
+    @Delete("DELETE FROM teacher")
+    void deleteAllTeachers();
 
     @Insert("""
         INSERT INTO teacher (employee_no, password, role, name, department, title, status)

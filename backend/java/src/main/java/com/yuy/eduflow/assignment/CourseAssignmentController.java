@@ -26,6 +26,7 @@ public class CourseAssignmentController {
 		@RequestParam(required = false) Long teacherId,
 		@RequestParam(required = false) Long classGroupId,
 		@RequestParam(required = false) Long courseId,
+		@RequestParam(required = false) Long classroomId,
 		@RequestParam(required = false) Integer weekNumber,
 		@RequestParam(required = false) Integer dayOfWeek,
 		@RequestParam(required = false) String status
@@ -34,6 +35,7 @@ public class CourseAssignmentController {
 			teacherId,
 			classGroupId,
 			courseId,
+			classroomId,
 			weekNumber,
 			dayOfWeek,
 			status
@@ -45,29 +47,35 @@ public class CourseAssignmentController {
 		return ApiResponse.success(courseAssignmentService.findById(id));
 	}
 
+	@GetMapping("/hour-audit")
+	public ApiResponse<CourseAssignmentHourAuditResult> findHourAudit(
+		@RequestParam(required = false) Long allocationTaskId,
+		@RequestParam(required = false) Long teachingTaskId
+	) {
+		return ApiResponse.success(courseAssignmentService.findHourAudit(allocationTaskId, teachingTaskId));
+	}
+
 	@PostMapping
-	public ApiResponse<CourseAssignment> create(@RequestBody CourseAssignmentRequest request) {
+	public ApiResponse<CourseAssignmentMutationResult> create(@RequestBody CourseAssignmentRequest request) {
 		return ApiResponse.success(courseAssignmentService.create(request));
 	}
 
 	@PutMapping("/{id}")
-	public ApiResponse<CourseAssignment> update(@PathVariable Long id, @RequestBody CourseAssignmentRequest request) {
+	public ApiResponse<CourseAssignmentMutationResult> update(@PathVariable Long id, @RequestBody CourseAssignmentRequest request) {
 		return ApiResponse.success(courseAssignmentService.update(id, request));
 	}
 
 	@PutMapping("/{id}/move")
-	public ApiResponse<Void> move(
+	public ApiResponse<CourseAssignmentMutationResult> move(
 		@PathVariable Long id,
 		@RequestParam Long timeSlotId,
 		@RequestParam(required = false) Long classroomId
 	) {
-		courseAssignmentService.moveAndRecheck(id, timeSlotId, classroomId);
-		return ApiResponse.success();
+		return ApiResponse.success(courseAssignmentService.moveAndRecheck(id, timeSlotId, classroomId));
 	}
 
 	@DeleteMapping("/{id}")
-	public ApiResponse<Void> delete(@PathVariable Long id) {
-		courseAssignmentService.delete(id);
-		return ApiResponse.success();
+	public ApiResponse<CourseAssignmentMutationResult> delete(@PathVariable Long id) {
+		return ApiResponse.success(courseAssignmentService.delete(id));
 	}
 }
