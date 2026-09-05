@@ -54,6 +54,7 @@ export default function CourseDialog({
               <option value="">选择类型</option>
               <option value="理论课">理论课</option>
               <option value="上机课">上机课</option>
+              <option value="实验课">实验课</option>
               <option value="实践课">实践课</option>
             </select>
           </div>

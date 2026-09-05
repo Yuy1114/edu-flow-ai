@@ -25,7 +25,7 @@ export default function TeachingTaskTable({ tasks, loading, search, onSearchChan
           <option value="">全部状态</option><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option>
         </select>
         <select className="select select-bordered select-sm w-28" value={courseTypeFilter} onChange={e => onCourseTypeFilterChange(e.target.value)}>
-          <option value="">课程类型</option><option value="理论课">理论课</option><option value="上机课">上机课</option><option value="实践课">实践课</option>
+          <option value="">课程类型</option><option value="理论课">理论课</option><option value="上机课">上机课</option><option value="实验课">实验课</option><option value="实践课">实践课</option>
         </select>
         <select className="select select-bordered select-sm w-36" value={taskBatchFilter} onChange={e => onTaskBatchFilterChange(e.target.value)}>
           <option value="">任务批次</option>

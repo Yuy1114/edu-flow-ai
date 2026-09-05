@@ -1,11 +1,36 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import request from "../api/request";
 import { toast } from "sonner";
+import { ALL_PERIODS, DEFAULT_ALLOWED_PERIODS } from "../lib/schedulingTime";
 
 interface AllocationTask { id: number; name: string; generationConfig?: any; schemeCount?: number; status: string; teachingTasks?: { id: number }[]; }
-export interface AllocationScheme { id: number; allocationTaskId: number; name?: string; status: string; createdAt?: string; schemeScore?: number; valid?: boolean; }
+export interface GenerationStatus {
+  status: "IDLE" | "RUNNING" | "SUCCESS" | "NEEDS_MANUAL_REVIEW" | "BLOCKED" | "FAILED";
+  startedAt?: number;
+  finishedAt?: number;
+  progress?: number;
+  error?: string;
+  jobId?: string;
+}
+export interface AllocationScheme {
+  id: number;
+  taskId: number;
+  allocationTaskId?: number;
+  schemeName?: string;
+  name?: string;
+  status: string;
+  createdAt?: string;
+  schemeScore?: number;
+  valid?: boolean;
+  modelVersion?: string;
+  summary?: string;
+  conflictSummary?: string;
+}
 export interface SchemeItem {
   id: number;
+  templateFragmentId?: number;
+  templateId?: number;
+  fragmentCode?: string;
   schemeId: number;
   teachingTaskId: number;
   courseName: string;
@@ -22,6 +47,44 @@ export interface SchemeItem {
   teacherProfilePenalty?: number;
   valid: boolean;
   conflictMessage?: string;
+  consecutiveSlots?: number;
+  durationWeeks?: number;
+  weekNumbers?: number[];
+  sourceType?: string;
+}
+
+export interface TemplateTaskHourAudit {
+  teachingTaskId: number;
+  courseName: string;
+  requiredHours: number;
+  scheduledHours: number;
+  deltaHours: number;
+  sessionPeriods: number;
+  status: "OK" | "UNDER" | "OVER";
+}
+
+export interface TemplateDraftView {
+  schemeId: number;
+  allocationTaskId: number;
+  generationRunId: string;
+  templates: { id: number; templateCode: string; templateName: string; fragmentCount: number; taskCount: number; weekNumbers: number[] }[];
+  audit: {
+    reviewStatus: "COMPLETE" | "COMPLETE_WITH_EXCEPTION" | "NEEDS_MANUAL_REVIEW" | "BLOCKED";
+    valid: boolean;
+    hardConflictCount: number;
+    teacherConflictCount: number;
+    classGroupConflictCount: number;
+    classroomConflictCount: number;
+    capacityMismatchCount: number;
+    roomTypeMismatchCount: number;
+    identityIssueCount: number;
+    hourMismatchTaskCount: number;
+    requiredTotalHours: number;
+    scheduledTotalHours: number;
+    deltaTotalHours: number;
+    taskHours: TemplateTaskHourAudit[];
+    issues: string[];
+  };
 }
 
 interface TeachingTaskBrief {
@@ -34,12 +97,12 @@ interface TeachingTaskBrief {
 
 const WEEKS = Array.from({length: 18}, (_, i) => i + 1);
 const WEEKDAYS = [{l:"周一",v:1},{l:"周二",v:2},{l:"周三",v:3},{l:"周四",v:4},{l:"周五",v:5},{l:"周六",v:6},{l:"周日",v:7}];
-const PERIODS = [1,2,3,4];
+const PERIODS = ALL_PERIODS;
 
 const defaultConfig = () => ({
   allowedWeeks: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
   allowedWeekdays: "1,2,3,4,5",
-  allowedPeriods: "1,2,3,4",
+  allowedPeriods: DEFAULT_ALLOWED_PERIODS,
   schemeCount: 3, generationMode: "AUTO", placementTopK: 80, rawPlanCount: 240, cpPlanCount: 80,
   solverTimeLimitSeconds: 3600, teacherProfilePenaltyScale: 80, earlyPeriodPenalty: 0.04, latePeriodPenalty: 0.03,
   weekendPenalty: 0.05, modelWeight: 0.6, llmWeight: 0.4, sameDayWeight: 0.05,
@@ -58,6 +121,12 @@ export function useAllocation() {
   const [generating, setGenerating] = useState(false);
   const [generateStatus, setGenerateStatus] = useState("");
   const [generateProgress, setGenerateProgress] = useState(0);
+  const [generationError, setGenerationError] = useState("");
+  const [lastGeneration, setLastGeneration] = useState<GenerationStatus | null>(null);
+  const selectedTaskIdRef = useRef<number | null>(null);
+  const selectionEpochRef = useRef(0);
+  const pollEpochRef = useRef(0);
+  const mountedRef = useRef(true);
 
   // Scheme detail
   const [detailScheme, setDetailScheme] = useState<AllocationScheme | null>(null);
@@ -76,12 +145,33 @@ export function useAllocation() {
   const [v35SelectedWeek, setV35SelectedWeek] = useState<number | null>(null);
   const [v35TemplatesLoading, setV35TemplatesLoading] = useState(false);
 
-  useEffect(() => { loadTasks(); }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadTasks(true);
+    return () => {
+      mountedRef.current = false;
+      pollEpochRef.current += 1;
+    };
+  }, []);
 
-  async function loadTasks() {
+  async function loadTasks(restoreSelection = false) {
     setLoading(true);
-    try { setTasks(await request.get("/api/allocation-tasks")); } catch { setTasks([]); }
-    finally { setLoading(false); }
+    try {
+      const data = await request.get<AllocationTask[]>("/api/allocation-tasks");
+      const rows = Array.isArray(data) ? data : [];
+      if (!mountedRef.current) return;
+      setTasks(rows);
+      if (restoreSelection && selectedTaskIdRef.current == null) {
+        let storedTaskId = 0;
+        try { storedTaskId = Number(sessionStorage.getItem("edu-flow-selected-allocation-task")); } catch { /* storage unavailable */ }
+        const taskToRestore = rows.find(task => task.id === storedTaskId)
+          ?? rows.find(task => task.status === "RUNNING");
+        if (taskToRestore) void selectTask(taskToRestore);
+      }
+    } catch {
+      if (mountedRef.current) setTasks([]);
+    }
+    finally { if (mountedRef.current) setLoading(false); }
   }
 
   async function loadTeachingTasks() {
@@ -158,16 +248,80 @@ export function useAllocation() {
     catch { toast.error("删除失败"); }
   }
 
+  function clearV35State() {
+    setV35Templates([]);
+    setV35TemplateWeeks([]);
+    setV35WeekTimetable([]);
+    setV35SelectedWeek(null);
+    setV35TemplatesLoading(false);
+    setLastGeneration(null);
+    setGenerationError("");
+    setGenerating(false);
+    setGenerateProgress(0);
+    setGenerateStatus("");
+  }
+
+  function isCurrentSelection(taskId: number, selectionEpoch: number) {
+    return mountedRef.current
+      && selectedTaskIdRef.current === taskId
+      && selectionEpochRef.current === selectionEpoch;
+  }
+
+  function applyGenerationStatus(taskId: number, selectionEpoch: number, status: GenerationStatus) {
+    if (!isCurrentSelection(taskId, selectionEpoch)) return;
+    setLastGeneration(status);
+    const terminalError = status.status === "BLOCKED" || status.status === "FAILED"
+      ? status.error || "排课作业未完成"
+      : "";
+    setGenerationError(terminalError);
+    if (status.status === "RUNNING") {
+      setGenerating(true);
+      setGenerateStatus("V3.5 排课进行中，请稍候...");
+      setGenerateProgress(Math.max(0, Math.min(99, status.progress ?? 0)));
+      return;
+    }
+    setGenerating(false);
+    if (status.status === "SUCCESS") {
+      setGenerateStatus("排课完成");
+      setGenerateProgress(100);
+    } else if (status.status === "NEEDS_MANUAL_REVIEW") {
+      setGenerateStatus("自动排课完成，等待人工复核");
+      setGenerateProgress(100);
+    } else if (terminalError) {
+      setGenerateStatus("排课未完成，请查看原因并修复输入后重试");
+      setGenerateProgress(0);
+    } else {
+      setGenerateStatus("");
+      setGenerateProgress(0);
+    }
+  }
+
+  async function loadSchemesForTask(taskId: number, selectionEpoch: number) {
+    setSchemesLoading(true);
+    try {
+      const data = await request.get("/api/allocation-schemes", { params: { taskId } });
+      if (isCurrentSelection(taskId, selectionEpoch)) {
+        setSchemes(Array.isArray(data) ? data : data?.content || []);
+      }
+    } catch {
+      if (isCurrentSelection(taskId, selectionEpoch)) setSchemes([]);
+    } finally {
+      if (isCurrentSelection(taskId, selectionEpoch)) setSchemesLoading(false);
+    }
+  }
+
   async function selectTask(task: AllocationTask) {
+    pollEpochRef.current += 1;
+    const selectionEpoch = ++selectionEpochRef.current;
+    selectedTaskIdRef.current = task.id;
+    try { sessionStorage.setItem("edu-flow-selected-allocation-task", String(task.id)); } catch { /* storage unavailable */ }
     setSelectedTask(task);
     setDetailScheme(null);
     setSchemeItems([]);
-    setSchemesLoading(true);
-    try {
-      const data = await request.get("/api/allocation-schemes", { params: { taskId: task.id } });
-      setSchemes(Array.isArray(data) ? data : data?.content || []);
-    } catch { setSchemes([]); }
-    finally { setSchemesLoading(false); }
+    clearV35State();
+    setSchemes([]);
+    void loadSchemesForTask(task.id, selectionEpoch);
+    void loadGenerationStatus(task.id, selectionEpoch, true);
   }
 
   async function loadSchemeItems(scheme: AllocationScheme) {
@@ -180,83 +334,153 @@ export function useAllocation() {
     finally { setSchemeItemsLoading(false); }
   }
 
-  async function loadV35Templates(taskId: number) {
+  async function loadV35Templates(taskId: number, selectionEpoch = selectionEpochRef.current) {
     setV35TemplatesLoading(true);
     try {
-      const templatesData = await request.get(`/api/allocation-tasks/${taskId}/templates`);
-      const weeksData = await request.get(`/api/allocation-tasks/${taskId}/templates/weeks`);
-      setV35Templates(Array.isArray(templatesData) ? templatesData : []);
-      setV35TemplateWeeks(Array.isArray(weeksData) ? weeksData : []);
-      setV35WeekTimetable([]);
-      setV35SelectedWeek(null);
+      const [templatesData, weeksData] = await Promise.all([
+        request.get(`/api/allocation-tasks/${taskId}/templates`),
+        request.get(`/api/allocation-tasks/${taskId}/templates/weeks`),
+      ]);
+      if (isCurrentSelection(taskId, selectionEpoch)) {
+        setV35Templates(Array.isArray(templatesData) ? templatesData : []);
+        setV35TemplateWeeks(Array.isArray(weeksData) ? weeksData : []);
+        setV35WeekTimetable([]);
+        setV35SelectedWeek(null);
+      }
     } catch {
-      setV35Templates([]);
-      setV35TemplateWeeks([]);
+      if (isCurrentSelection(taskId, selectionEpoch)) {
+        setV35Templates([]);
+        setV35TemplateWeeks([]);
+      }
     } finally {
-      setV35TemplatesLoading(false);
+      if (isCurrentSelection(taskId, selectionEpoch)) setV35TemplatesLoading(false);
     }
   }
 
   async function loadV35WeekTimetable(taskId: number, weekNumber: number) {
+    const selectionEpoch = selectionEpochRef.current;
     try {
       const data = await request.get(`/api/allocation-tasks/${taskId}/templates/weeks/${weekNumber}/timetable`);
-      setV35WeekTimetable(Array.isArray(data) ? data : []);
-      setV35SelectedWeek(weekNumber);
+      if (isCurrentSelection(taskId, selectionEpoch)) {
+        setV35WeekTimetable(Array.isArray(data) ? data : []);
+        setV35SelectedWeek(weekNumber);
+      }
     } catch {
-      setV35WeekTimetable([]);
+      if (isCurrentSelection(taskId, selectionEpoch)) setV35WeekTimetable([]);
+    }
+  }
+
+  async function refreshAfterGeneration(taskId: number, selectionEpoch: number) {
+    const detailRequest = request.get<AllocationTask>(`/api/allocation-tasks/${taskId}`).catch(() => null);
+    await Promise.all([
+      loadTasks(),
+      loadSchemesForTask(taskId, selectionEpoch),
+      loadV35Templates(taskId, selectionEpoch),
+    ]);
+    const detail = await detailRequest;
+    if (detail && isCurrentSelection(taskId, selectionEpoch)) setSelectedTask(detail);
+  }
+
+  async function finishGeneration(
+    taskId: number,
+    selectionEpoch: number,
+    status: GenerationStatus,
+    announce: boolean,
+  ) {
+    applyGenerationStatus(taskId, selectionEpoch, status);
+    if (status.status === "SUCCESS" || status.status === "NEEDS_MANUAL_REVIEW") {
+      await refreshAfterGeneration(taskId, selectionEpoch);
+      if (announce && isCurrentSelection(taskId, selectionEpoch)) {
+        if (status.status === "SUCCESS") toast.success("V3.5 模板排课完成");
+        else toast.warning(status.error || "已生成待人工复核的候选课表");
+      }
+    } else if (announce && (status.status === "BLOCKED" || status.status === "FAILED") && isCurrentSelection(taskId, selectionEpoch)) {
+      toast.error(status.error || "V3.5 排课失败");
+    }
+  }
+
+  async function pollGeneration(taskId: number, selectionEpoch: number, announce: boolean) {
+    const pollEpoch = ++pollEpochRef.current;
+    const pollInterval = 3000;
+    const maxPolls = 600; // 30 minutes, aligned with the durable worker timeout.
+    for (let index = 0; index < maxPolls; index += 1) {
+      if (!isCurrentSelection(taskId, selectionEpoch) || pollEpochRef.current !== pollEpoch) return;
+      try {
+        const status = await request.get<GenerationStatus>(`/api/allocation-tasks/${taskId}/templates/generation-status`, { suppressErrorToast: true });
+        if (!isCurrentSelection(taskId, selectionEpoch) || pollEpochRef.current !== pollEpoch) return;
+        applyGenerationStatus(taskId, selectionEpoch, status);
+        if (["SUCCESS", "NEEDS_MANUAL_REVIEW", "BLOCKED", "FAILED"].includes(status.status)) {
+          await finishGeneration(taskId, selectionEpoch, status, announce);
+          return;
+        }
+      } catch {
+        if (isCurrentSelection(taskId, selectionEpoch)) {
+          setGenerateStatus("排课作业仍在后台运行，暂时无法读取最新状态...");
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+    if (isCurrentSelection(taskId, selectionEpoch) && pollEpochRef.current === pollEpoch) {
+      setGenerating(false);
+      setGenerationError("前端已等待30分钟，作业状态仍保存在服务端；重新选择该任务可继续恢复查询。");
+      setGenerateStatus("等待超时，请稍后重新查询持久作业状态");
+    }
+  }
+
+  async function loadGenerationStatus(taskId: number, selectionEpoch: number, resumePolling: boolean) {
+    try {
+      const status = await request.get<GenerationStatus>(`/api/allocation-tasks/${taskId}/templates/generation-status`, { suppressErrorToast: true });
+      if (!isCurrentSelection(taskId, selectionEpoch)) return;
+      applyGenerationStatus(taskId, selectionEpoch, status);
+      if (status.status === "RUNNING" && resumePolling) {
+        void pollGeneration(taskId, selectionEpoch, false);
+      } else if (status.status === "SUCCESS" || status.status === "NEEDS_MANUAL_REVIEW") {
+        void loadV35Templates(taskId, selectionEpoch);
+      }
+    } catch {
+      if (isCurrentSelection(taskId, selectionEpoch)) {
+        setLastGeneration(null);
+        setGenerating(false);
+      }
     }
   }
 
   async function generateSchemes() {
     if (!selectedTask) return;
+    pollEpochRef.current += 1;
+    const selectionEpoch = selectionEpochRef.current;
     setGenerating(true);
+    setGenerationError("");
+    setLastGeneration(null);
     setGenerateProgress(0);
     setGenerateStatus("正在触发 V3.5 模板排课...");
     const taskId = selectedTask.id;
     try {
-      await request.post(`/api/allocation-tasks/${taskId}/templates/generate`, {
+      const submitted = await request.post<GenerationStatus>(`/api/allocation-tasks/${taskId}/templates/generate`, {
         importDb: true,
         truncateDb: false,
       });
-      setGenerateStatus("V3.5 排课进行中，请稍候...");
-      setGenerateProgress(30);
-
-      // Poll generation status (V3.5 doesn't have SSE yet)
-      const pollInterval = 3000;
-      const maxPolls = 120;
-      for (let i = 0; i < maxPolls; i++) {
-        await new Promise(r => setTimeout(r, pollInterval));
-        try {
-          const status: any = await request.get(`/api/allocation-tasks/${taskId}/templates/generation-status`);
-          if (status.status === "SUCCESS") {
-            setGenerateStatus("排课完成");
-            setGenerateProgress(100);
-            toast.success("V3.5 模板排课完成");
-            await loadV35Templates(taskId);
-            // 刷新方案列表，让新创建的 V3.5 方案出现在列表中
-            const updatedTask = tasks.find(t => t.id === taskId);
-            if (updatedTask) await selectTask(updatedTask);
-            return;
-          }
-          if (status.status === "FAILED") {
-            throw new Error(status.error || "V3.5 排课失败");
-          }
-          if (status.status === "RUNNING") {
-            setGenerateProgress(50 + Math.floor(i / 4));
-          }
-        } catch (pollErr: any) {
-          if (pollErr.message?.includes("FAILED")) throw pollErr;
-          setGenerateStatus("等待排课服务响应...");
-        }
+      if (!isCurrentSelection(taskId, selectionEpoch)) return;
+      applyGenerationStatus(taskId, selectionEpoch, submitted);
+      if (["SUCCESS", "NEEDS_MANUAL_REVIEW", "BLOCKED", "FAILED"].includes(submitted.status)) {
+        await finishGeneration(taskId, selectionEpoch, submitted, true);
+        return;
       }
-      throw new Error("排课超时");
+      await pollGeneration(taskId, selectionEpoch, true);
     } catch (e: any) {
-      toast.error("V3.5 排课失败: " + (e.message || ""));
-    } finally {
+      if (!isCurrentSelection(taskId, selectionEpoch)) return;
+      const message = e.message || "V3.5 排课失败";
       setGenerating(false);
-      setGenerateProgress(0);
-      setGenerateStatus("");
+      setGenerationError(message);
+      setGenerateStatus("排课未完成，请查看原因并修复输入后重试");
+      toast.error("V3.5 排课失败: " + message);
     }
+  }
+
+  function refreshGenerationStatus() {
+    if (!selectedTaskIdRef.current) return;
+    pollEpochRef.current += 1;
+    void loadGenerationStatus(selectedTaskIdRef.current, selectionEpochRef.current, true);
   }
 
   async function confirmScheme(schemeId: number) {
@@ -290,17 +514,17 @@ export function useAllocation() {
     }));
   }
 
-  const dayNames = ["周日","周一","周二","周三","周四","周五","周六"];
+  const dayNames = ["周一","周二","周三","周四","周五","周六","周日"];
 
   return {
     tasks, loading, taskDialog, setTaskDialog, taskForm, setTaskForm, saving,
-    selectedTask, schemes, schemesLoading, generating, generateStatus, generateProgress,
+    selectedTask, schemes, schemesLoading, generating, generateStatus, generateProgress, generationError, lastGeneration,
     WEEKS, WEEKDAYS, PERIODS,
     detailScheme, schemeItems, schemeItemsLoading,
     teachingTasks, teachingTasksLoading,
     filteredTeachingTasks, teachingTaskBatchFilter, setTeachingTaskBatchFilter, teachingTaskBatchOptions,
     loadTasks, openTaskDialog, saveTask, deleteTask, selectTask,
-    generateSchemes, confirmScheme, updateConfig,
+    generateSchemes, refreshGenerationStatus, confirmScheme, updateConfig,
     loadSchemeItems, setDetailScheme, toggleTeachingTask, selectAllTeachingTasks,
     dayNames,
     v35Templates, v35TemplateWeeks, v35WeekTimetable, v35SelectedWeek,

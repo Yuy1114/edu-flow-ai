@@ -9,10 +9,10 @@ interface Props {
   form: TeachingTask; onChange: (f: TeachingTask) => void;
   saving: boolean; onSave: () => void; onClose: () => void;
   courses: Course[]; teachers: Teacher[]; classGroups: ClassGroup[]; classrooms: Classroom[];
-  onCourseChanged: (id: number) => void; onCourseTypeChanged: (type: string) => void;
+  onCourseChanged: (id: number) => void;
 }
 
-export default function TeachingTaskDialog({ form, onChange, saving, onSave, onClose, courses, teachers, classGroups, classrooms, onCourseChanged, onCourseTypeChanged }: Props) {
+export default function TeachingTaskDialog({ form, onChange, saving, onSave, onClose, courses, teachers, classGroups, classrooms, onCourseChanged }: Props) {
   return (
     <div className="modal modal-open">
       <div className="modal-box max-w-lg">
@@ -27,11 +27,10 @@ export default function TeachingTaskDialog({ form, onChange, saving, onSave, onC
           </div>
           <div>
             <label className="label pb-1"><span className="label-text">课程类型</span></label>
-            <select className="select select-bordered w-full" value={form.courseType} onChange={e => onCourseTypeChanged(e.target.value)}>
-              <option value="理论课">理论课</option><option value="上机课">上机课</option><option value="实践课">实践课</option>
-            </select>
+            <input className="input input-bordered w-full" value={form.courseType} readOnly aria-readonly="true" />
+            <span className="text-xs text-base-content/40 mt-1">课程类型继承自所选课程，并决定一次课连续占用2节还是4节</span>
           </div>
-          <div><label className="label pb-1"><span className="label-text">所需教室</span></label><input className="input input-bordered w-full" value={form.requiredRoomType} disabled /></div>
+          <div><label className="label pb-1"><span className="label-text">所需教室</span></label><select className="select select-bordered w-full" value={form.requiredRoomType} onChange={e => onChange({...form, requiredRoomType: e.target.value})}><option value="">不限定</option><option value="普通教室">普通教室</option><option value="机房">机房</option></select></div>
           <div><label className="label pb-1"><span className="label-text">任务批次</span></label><input className="input input-bordered w-full" placeholder="如 2026学期上 / 测试用例01" value={form.taskBatch || "DEFAULT"} onChange={e => onChange({...form, taskBatch: e.target.value})} /></div>
           <div>
             <label className="label pb-1"><span className="label-text">主讲教师</span></label>
@@ -51,11 +50,26 @@ export default function TeachingTaskDialog({ form, onChange, saving, onSave, onC
           <div><label className="label pb-1"><span className="label-text">每周次数（可选）</span></label><input type="number" className="input input-bordered w-full" value={form.sessionsPerWeek ?? ""} min={1} placeholder="不填由系统推算" onChange={e => onChange({...form, sessionsPerWeek: e.target.value === "" ? "" : Number(e.target.value)})} /></div>
           <div><label className="label pb-1"><span className="label-text">持续周数（可选）</span></label><input type="number" className="input input-bordered w-full" value={form.durationWeeks ?? ""} min={1} placeholder="不填由系统推算" onChange={e => onChange({...form, durationWeeks: e.target.value === "" ? "" : Number(e.target.value)})} /><span className="text-xs text-base-content/40 mt-1">次数×周数×每次课时须等于总课时</span></div>
           <div>
-            <label className="label pb-1"><span className="label-text">推荐教室</span></label>
-            <select className="select select-bordered w-full" value={form.classroomId || ""} onChange={e => onChange({...form, classroomId: e.target.value ? Number(e.target.value) : undefined})}>
-              <option value="">可选，不选由排课自动分配</option>
+            <label className="label pb-1"><span className="label-text">固定教室</span></label>
+            <select className="select select-bordered w-full" value={form.classroomId || ""} onChange={e => onChange({...form, classroomId: e.target.value ? Number(e.target.value) : undefined, candidateClassroomIds: e.target.value ? [] : form.candidateClassroomIds})}>
+              <option value="">不锁定教室</option>
               {classrooms.map(cr => <option key={cr.id} value={cr.id}>{cr.name}({cr.building || "?"}, {cr.capacity}座)</option>)}
             </select>
+          </div>
+          <div>
+            <label className="label pb-1"><span className="label-text">候选教室</span></label>
+            <div className={`flex flex-wrap gap-1 border border-base-300 rounded-lg p-2 min-h-[40px] ${form.classroomId ? "opacity-50" : ""}`}>
+              {classrooms.map(cr => {
+                const selected = form.candidateClassroomIds.includes(cr.id);
+                return (
+                  <button key={cr.id} type="button" disabled={Boolean(form.classroomId)}
+                    className={`badge badge-sm cursor-pointer ${selected ? "badge-secondary" : "badge-ghost"}`}
+                    onClick={() => onChange({...form, candidateClassroomIds: selected ? form.candidateClassroomIds.filter(id => id !== cr.id) : [...form.candidateClassroomIds, cr.id]})}
+                  >{cr.name}</button>
+                );
+              })}
+            </div>
+            <span className="text-xs text-base-content/40 mt-1">留空表示由引擎从全部合规教室中选择；设置固定教室后候选集合停用</span>
           </div>
           <div>
             <label className="label pb-1"><span className="label-text">班级</span></label>

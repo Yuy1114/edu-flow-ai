@@ -27,14 +27,14 @@ instance.interceptors.response.use(
     const res = response.data as ApiResponse<unknown>;
     if (res.code !== 0) {
       const msg = res.message || "请求失败";
-      toast.error(msg);
+      if (!(response.config as any).suppressErrorToast) toast.error(msg);
       return Promise.reject(new Error(msg));
     }
     return res.data as any;
   },
   (error) => {
     const msg = error.response?.data?.message || error.message || "网络错误";
-    toast.error(msg);
+    if (!error.config?.suppressErrorToast) toast.error(msg);
     return Promise.reject(error);
   }
 );

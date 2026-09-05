@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import request from "../api/request";
 import { useBatchSelection } from "./useBatchSelection";
 
-interface Course { id: number; name: string; code: string; courseType: string; requiredHours: number; }
+interface Course { id: number; name: string; code: string; courseType: string; requiredRoomType?: string; requiredHours: number; }
 interface Teacher { id: number; name: string; }
 interface ClassGroup { id: number; name: string; }
 interface Classroom { id: number; name: string; building: string; capacity: number; }
@@ -16,6 +16,7 @@ export interface TeachingTask {
   primaryTeacherId: number | "";
   assistantTeacherId?: number | "";
   classroomId?: number | "";
+  candidateClassroomIds: number[];
   classGroupIds: number[];
   totalHours: number;
   sessionsPerWeek?: number | "";
@@ -26,19 +27,21 @@ export interface TeachingTask {
   primaryTeacher?: Teacher;
   assistantTeacher?: Teacher;
   classroom?: Classroom;
+  candidateClassrooms?: Classroom[];
   classGroups?: ClassGroup[];
 }
 
 const courseTypeOptions = [
   { value: "理论课", room: "普通教室" },
   { value: "上机课", room: "机房" },
+  { value: "实验课", room: "普通教室" },
   { value: "实践课", room: "" },
 ];
 
 const emptyForm: TeachingTask = {
   id: null, courseId: "", courseType: "理论课", requiredRoomType: "普通教室", taskBatch: "DEFAULT",
   primaryTeacherId: "", assistantTeacherId: "", classroomId: "",
-  classGroupIds: [], totalHours: 32, sessionsPerWeek: "", durationWeeks: "", notes: "", status: "ACTIVE",
+  candidateClassroomIds: [], classGroupIds: [], totalHours: 32, sessionsPerWeek: "", durationWeeks: "", notes: "", status: "ACTIVE",
 };
 
 export function useTeachingTasks() {
@@ -107,18 +110,10 @@ export function useTeachingTasks() {
       setForm(f => ({
         ...f, courseId,
         courseType: course.courseType || f.courseType,
-        requiredRoomType: opt?.room || "",
+        requiredRoomType: course.requiredRoomType || opt?.room || "",
         totalHours: course.requiredHours || 32,
       }));
     }
-  }
-
-  function onCourseTypeChanged(type: string) {
-    const opt = courseTypeOptions.find(o => o.value === type);
-    setForm(f => ({
-      ...f, courseType: type,
-      requiredRoomType: opt?.room || "",
-    }));
   }
 
   function openDialog(row?: TeachingTask) {
@@ -132,6 +127,7 @@ export function useTeachingTasks() {
         primaryTeacherId: row.primaryTeacherId ?? "",
         assistantTeacherId: row.assistantTeacherId ?? "",
         classroomId: row.classroomId ?? "",
+        candidateClassroomIds: row.candidateClassrooms?.map(classroom => classroom.id) ?? row.candidateClassroomIds ?? [],
         classGroupIds: row.classGroups?.map(cg => cg.id) ?? row.classGroupIds ?? [],
         totalHours: row.totalHours || 32,
         sessionsPerWeek: row.sessionsPerWeek ?? "",
@@ -150,7 +146,6 @@ export function useTeachingTasks() {
   async function save() {
     setSaving(true);
     try {
-      const roomMap: Record<string, string> = { "理论课": "普通教室", "上机课": "机房", "实践课": "" };
       const payload = {
         ...form,
         sessionsPerWeek: form.sessionsPerWeek === "" ? null : form.sessionsPerWeek,
@@ -159,10 +154,7 @@ export function useTeachingTasks() {
       if (form.id) {
         await request.put(`/api/teaching-tasks/${form.id}`, payload);
       } else {
-        await request.post("/api/teaching-tasks", {
-          ...payload,
-          requiredRoomType: roomMap[form.courseType] || "",
-        });
+        await request.post("/api/teaching-tasks", payload);
       }
       setDialogOpen(false);
       await loadAll();
@@ -196,7 +188,7 @@ export function useTeachingTasks() {
     dialogOpen, form, setForm, saving, deleting,
     courses, teachers, classGroups, classrooms,
     openDialog, closeDialog, save, remove,
-    onCourseChanged, onCourseTypeChanged,
+    onCourseChanged,
     batch,
   };
 }

@@ -1,12 +1,13 @@
 import { Link } from "@tanstack/react-router";
 import { useAllocation } from "../hooks/useAllocation";
+import { AUTO_SCHEDULING_PERIODS, parsePeriodSelection, periodSegment } from "../lib/schedulingTime";
 
 export default function AllocationManager() {
   const a = useAllocation();
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2>分课任务</h2>
         <button className="btn btn-primary btn-sm" onClick={() => a.openTaskDialog()}>新增排课任务</button>
       </div>
@@ -22,8 +23,8 @@ export default function AllocationManager() {
                 <td>{t.id}</td>
                 <td className="font-medium cursor-pointer hover:text-primary" onClick={() => a.selectTask(t)}>{t.name || `任务 #${t.id}`}</td>
                 <td>{t.schemeCount ?? "-"}</td>
-                <td><span className={`badge badge-xs ${t.status === "ACTIVE" ? "badge-success" : "badge-ghost"}`}>{t.status}</span></td>
-                <td><div className="flex gap-1">
+                <td><span className={`badge badge-xs ${t.status === "RUNNING" ? "badge-info" : t.status === "CONFIRMED" || t.status === "GENERATED" ? "badge-success" : t.status === "BLOCKED" || t.status === "FAILED" ? "badge-error" : t.status === "NEEDS_MANUAL_REVIEW" ? "badge-warning" : "badge-ghost"}`}>{t.status}</span></td>
+                <td><div className="flex flex-wrap gap-1">
                   <button className="btn btn-xs btn-ghost" onClick={() => a.openTaskDialog(t)}>编辑</button>
                   <button className="btn btn-xs btn-ghost text-error" onClick={() => a.deleteTask(t.id)}>删除</button>
                 </div></td>
@@ -38,8 +39,8 @@ export default function AllocationManager() {
           {/* Schemes section */}
           <div className="card bg-base-100 shadow-sm">
             <div className="card-body p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="font-bold">方案列表 — {a.selectedTask.name || `任务 #${a.selectedTask.id}`}</span>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0 break-words font-bold">方案列表 — {a.selectedTask.name || `任务 #${a.selectedTask.id}`}</span>
                 <button className="btn btn-info btn-sm" disabled={a.generating || !a.selectedTask} onClick={a.generateSchemes}>
                   {a.generating ? <><span className="loading loading-spinner loading-xs" /> V3.5 排课中...</> : "V3.5 模板排课"}
                 </button>
@@ -55,6 +56,17 @@ export default function AllocationManager() {
                   </div>
                 </div>
               )}
+              {!a.generating && (a.generationError || a.lastGeneration && a.lastGeneration.status !== "IDLE") && (
+                <div className={`mb-4 rounded-lg border p-3 text-sm ${a.generationError ? "border-error/40 bg-error/5" : a.lastGeneration?.status === "NEEDS_MANUAL_REVIEW" ? "border-warning/40 bg-warning/5" : "border-success/40 bg-success/5"}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`badge badge-sm ${a.generationError ? "badge-error" : a.lastGeneration?.status === "NEEDS_MANUAL_REVIEW" ? "badge-warning" : "badge-success"}`}>{a.lastGeneration?.status || "FAILED"}</span>
+                    <span className="font-medium">{a.generateStatus || "已恢复持久排课作业状态"}</span>
+                    {a.lastGeneration?.jobId && <span className="break-all font-mono text-[10px] text-base-content/45">作业 {a.lastGeneration.jobId}</span>}
+                    <button className="btn btn-ghost btn-xs ml-auto" onClick={a.refreshGenerationStatus}>刷新状态</button>
+                  </div>
+                  {a.generationError && <div className="mt-2 whitespace-pre-wrap break-words text-xs text-error">{a.generationError}</div>}
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="table table-sm table-zebra">
                   <thead><tr><th>ID</th><th>方案名</th><th>评分</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
@@ -63,14 +75,14 @@ export default function AllocationManager() {
                     : a.schemes.length === 0 ? <tr><td colSpan={6} className="text-center py-8 text-base-content/40">暂无方案，点击「生成排课方案」开始</td></tr>
                     : a.schemes.map(s => <tr key={s.id}>
                         <td>{s.id}</td>
-                        <td>{s.name || `方案 #${s.id}`}</td>
+						<td>{s.schemeName || s.name || `方案 #${s.id}`}</td>
                         <td>{s.schemeScore != null ? s.schemeScore.toFixed(2) : "-"}</td>
                         <td><span className={`badge badge-xs ${s.status === "CONFIRMED" ? "badge-success" : s.status === "GENERATED" ? "badge-info" : "badge-warning"}`}>{s.status}</span></td>
                         <td>{s.createdAt?.replace("T"," ").substring(0,19) || "-"}</td>
                         <td>
-                          <div className="flex gap-1">
+                          <div className="flex flex-wrap gap-1">
                             <Link to="/admin/allocation/schemes/$schemeId" params={{ schemeId: String(s.id) }} className="btn btn-xs btn-ghost">查看详情</Link>
-                            <button className="btn btn-xs btn-success" disabled={s.status === "CONFIRMED"} onClick={() => a.confirmScheme(s.id)}>确认方案</button>
+							<button className="btn btn-xs btn-success" disabled={s.status === "CONFIRMED" || s.valid === false} onClick={() => a.confirmScheme(s.id)}>确认方案</button>
                           </div>
                         </td>
                       </tr>)}
@@ -84,7 +96,7 @@ export default function AllocationManager() {
       {a.selectedTask && a.v35Templates.length > 0 && (
         <div className="card bg-base-100 shadow-sm border border-info/20">
           <div className="card-body p-4">
-            <div className="flex items-center justify-between mb-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-info">V3.5 模板排课结果</span>
               <button className="btn btn-ghost btn-xs" onClick={() => a.loadV35Templates(a.selectedTask!.id)}>刷新</button>
             </div>
@@ -109,11 +121,14 @@ export default function AllocationManager() {
                   {a.v35TemplateWeeks.map((w: any) => (
                     <button
                       key={w.weekNumber}
-                      className={`btn btn-xs ${a.v35SelectedWeek === w.weekNumber ? "btn-info" : "btn-ghost"} ${w.templateCode === "cover_v1_template_2" ? "border-dashed" : ""}`}
+					  className={`btn btn-xs ${a.v35SelectedWeek === w.weekNumber ? "btn-info" : "btn-ghost"}`}
                       onClick={() => a.loadV35WeekTimetable(a.selectedTask!.id, w.weekNumber)}
+					  title={w.templateCode}
                     >
                       第{w.weekNumber}周
-                      <span className="text-[9px] opacity-50 ml-0.5">{w.templateCode === "cover_v1_template_1" ? "T1" : "T2"}</span>
+					  <span className="text-[9px] opacity-50 ml-0.5">
+						模板{Math.max(1, a.v35Templates.findIndex((template: any) => template.id === w.templateId) + 1)}
+					  </span>
                     </button>
                   ))}
                 </div>
@@ -166,7 +181,7 @@ export default function AllocationManager() {
       {/* Task dialog */}
       {a.taskDialog && (
         <div className="modal modal-open">
-          <div className="modal-box max-w-2xl max-h-[85vh] overflow-y-auto">
+          <div className="modal-box max-h-[85vh] w-[calc(100%-1rem)] max-w-2xl overflow-y-auto p-4 sm:p-6">
             <h3 className="font-bold text-lg mb-4">{a.taskForm.id ? "编辑排课任务" : "新增排课任务"}</h3>
             <div className="space-y-3">
               <div><label className="label pb-1"><span className="label-text">任务名称</span></label><input className="input input-bordered w-full" value={a.taskForm.name} onChange={e => a.setTaskForm({...a.taskForm, name: e.target.value})} /></div>
@@ -197,24 +212,31 @@ export default function AllocationManager() {
                       </div>
                     </div>
                     <div>
-                      <label className="label py-1"><span className="label-text text-xs">可用节次</span></label>
+                      <label className="label py-1">
+                        <span className="label-text text-xs">自动排课可用节次</span>
+                        <span className="label-text-alt text-[10px] text-base-content/45">每节45分钟；默认上午1-4、下午5-8</span>
+                      </label>
                       <div className="flex flex-wrap gap-1">
-                        {["第1节","第2节","第3节","第4节","第5节"].map((label, i) => {
-                          const period = i + 1;
+                        {a.PERIODS.map(period => {
                           const cfg = a.taskForm.generationConfig || {};
-                          const periods: number[] = typeof cfg.allowedPeriods === "string" ? cfg.allowedPeriods.split(",").map(Number) : (cfg.allowedPeriods || [1,2,3,4]);
+                          const periods = parsePeriodSelection(cfg.allowedPeriods);
                           const selected = periods.includes(period);
                           return (
                             <button key={period} type="button"
-                              className={`badge badge-sm cursor-pointer ${selected ? "badge-primary" : "badge-ghost"}`}
+                              className={`badge badge-sm cursor-pointer ${selected ? "badge-primary" : "badge-ghost"} ${period > 8 ? "border-warning/50" : ""}`}
                               onClick={() => {
                                 const newPeriods = selected ? periods.filter(p => p !== period) : [...periods, period].sort();
                                 a.updateConfig("allowedPeriods", newPeriods);
                               }}
-                            >{label}</button>
+                              title={period > 8 ? "晚间保留节次，自动排课默认不启用，人工调课仍可使用" : `${periodSegment(period)}自动排课节次`}
+                            >第{period}节{period > 8 ? " · 晚" : ""}</button>
                           );
                         })}
                       </div>
+                      <p className="mt-1 text-[10px] text-base-content/45">
+                        理论课通常连续2节，上机/实验课连续4节；第9-10节和周末默认留给人工调课。
+                        {!AUTO_SCHEDULING_PERIODS.every(period => parsePeriodSelection(a.taskForm.generationConfig?.allowedPeriods).includes(period)) && " 当前已自定义白天时段。"}
+                      </p>
                     </div>
                     <div>
                       <label className="label py-1"><span className="label-text text-xs">可用周次</span></label>

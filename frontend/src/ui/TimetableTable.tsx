@@ -13,8 +13,8 @@ export default function TimetableTable({ assignments, loading }: Props) {
           : assignments.map(a => (
             <tr key={a.id}>
               <td>{a.id}</td><td>{a.courseName}</td><td>{a.classGroupName}</td><td>{a.teacherName}</td><td>{a.classroomName}</td>
-              <td>{a.timeSlotLabel}</td><td>{a.weekNumber}</td><td>{a.dayOfWeek}</td><td>{a.periodIndex}</td>
-              <td><span className={`badge badge-xs ${a.status === "CONFIRMED" ? "badge-success" : "badge-ghost"}`}>{a.status}</span></td>
+              <td>{a.timeSlotLabel}</td><td>{a.weekNumber}</td><td>{a.dayOfWeek}</td><td>{a.periodIndex}{(a.consecutiveSlots || 1) > 1 ? `–${a.periodIndex + (a.consecutiveSlots || 1) - 1}` : ""}</td>
+              <td><span className={`badge badge-xs ${a.status === "ACTIVE" ? "badge-success" : "badge-ghost"}`}>{a.status}</span></td>
             </tr>
           ))}
         </tbody>

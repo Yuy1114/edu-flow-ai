@@ -14,6 +14,7 @@ const menus: MenuItem[] = [
   { path: "/admin/class-groups", label: "班级管理" },
   { path: "/admin/teachers", label: "教师管理" },
   { path: "/admin/teaching-tasks", label: "教学任务" },
+  { path: "/admin/simulation", label: "模拟实验台" },
   { path: "/admin/import-review", label: "导入审核" },
   { path: "/admin/allocation", label: "分课任务" },
   { path: "/admin/model-training", label: "模型训练" },

@@ -24,7 +24,7 @@ const FIELD_LABELS: Record<string, string> = {
   classroom_name: "教室",
   classroom_type: "类型",
   day_of_week: "星期",
-  period_index: "大节",
+  period_index: "45分钟节次",
   week_index: "周次",
   student_count: "人数",
   capacity: "容量",
