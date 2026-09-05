@@ -3,6 +3,8 @@
 -- Design doc: docs/architecture/22-V3.5-模板化排课落库设计.md
 -- Core idea: template -> week mapping -> template fragments -> occupied slots.
 
+USE edu_flow_ai;
+
 CREATE TABLE IF NOT EXISTS schedule_template (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     allocation_task_id BIGINT NOT NULL COMMENT '排课任务ID',
@@ -57,8 +59,10 @@ CREATE TABLE IF NOT EXISTS schedule_template_fragment (
     classroom_id BIGINT NULL,
     classroom_name VARCHAR(128) NOT NULL,
     day_of_week INT NOT NULL COMMENT '星期 1-7',
-    period_index INT NOT NULL COMMENT '起始课段',
-    consecutive_slots INT NOT NULL DEFAULT 1 COMMENT '连续课段数，理论=1，上机=2',
+    period_index INT NOT NULL COMMENT '起始45分钟原子节次，范围1-10',
+    consecutive_slots INT NOT NULL DEFAULT 1 COMMENT '连续45分钟节次数，理论=2，上机/实验=4，人工可为1',
+    duration_weeks INT NULL COMMENT '课程在当前模板映射周中的有效次数',
+    session_hours INT NULL COMMENT '每次课计入的教学课时数',
     required_room_type VARCHAR(32) NULL COMMENT '普通教室/机房',
     source_type VARCHAR(32) NOT NULL DEFAULT 'AUTO' COMMENT 'AUTO/MANUAL/ADJUSTED',
     lock_status VARCHAR(32) NOT NULL DEFAULT 'UNLOCKED' COMMENT 'LOCKED/UNLOCKED',
@@ -77,6 +81,27 @@ CREATE TABLE IF NOT EXISTS schedule_template_fragment (
     KEY idx_template_teacher_time (template_id, teacher_id, day_of_week, period_index)
 ) COMMENT='排课模板片段表';
 
+-- A dynamic template may contain fragments active in only part of the weeks
+-- mapped to that template. Store the exact absolute weeks instead of inferring
+-- them from duration_weeks at query/publication time.
+CREATE TABLE IF NOT EXISTS schedule_template_fragment_week (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    template_fragment_id BIGINT NOT NULL,
+    allocation_task_id BIGINT NOT NULL,
+    generation_run_id VARCHAR(64) NULL,
+    template_id BIGINT NOT NULL,
+    week_number INT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_template_fragment_week (template_fragment_id, week_number),
+    KEY idx_fragment_week_allocation_run (allocation_task_id, generation_run_id, week_number),
+    KEY idx_fragment_week_template (template_id, week_number),
+    CONSTRAINT fk_fragment_week_fragment FOREIGN KEY (template_fragment_id)
+        REFERENCES schedule_template_fragment (id) ON DELETE CASCADE,
+    CONSTRAINT fk_fragment_week_template FOREIGN KEY (template_id)
+        REFERENCES schedule_template (id) ON DELETE CASCADE,
+    CONSTRAINT chk_fragment_week_number CHECK (week_number BETWEEN 1 AND 52)
+) COMMENT='模板片段精确生效教学周';
+
 CREATE TABLE IF NOT EXISTS schedule_template_fragment_slot (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     template_fragment_id BIGINT NOT NULL,
@@ -90,7 +115,7 @@ CREATE TABLE IF NOT EXISTS schedule_template_fragment_slot (
     teacher_id BIGINT NULL,
     class_group_id BIGINT NULL,
     day_of_week INT NOT NULL,
-    period_index INT NOT NULL,
+    period_index INT NOT NULL COMMENT '实际占用的45分钟原子节次，范围1-10',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_fragment (template_fragment_id),
     KEY idx_allocation_run (allocation_task_id, generation_run_id),
@@ -99,6 +124,41 @@ CREATE TABLE IF NOT EXISTS schedule_template_fragment_slot (
     KEY idx_template_class_time (template_id, class_group_id, day_of_week, period_index),
     KEY idx_template_teacher_time (template_id, teacher_id, day_of_week, period_index)
 ) COMMENT='模板片段实际课段占用表';
+
+-- 一个教学任务可同时占用主讲教师和助教。不要把多个教师压进 teacher_id 单值列。
+CREATE TABLE IF NOT EXISTS schedule_template_fragment_teacher (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    template_fragment_id BIGINT NOT NULL,
+    fragment_code VARCHAR(255) NOT NULL,
+    template_id BIGINT NOT NULL,
+    template_code VARCHAR(64) NOT NULL,
+    allocation_task_id BIGINT NOT NULL,
+    generation_run_id VARCHAR(64) NULL,
+    teaching_task_id BIGINT NULL,
+    teacher_id BIGINT NOT NULL,
+    teacher_role VARCHAR(32) NOT NULL COMMENT 'PRIMARY/ASSISTANT',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_fragment_teacher (template_fragment_id, teacher_id),
+    KEY idx_template_teacher (template_id, teacher_id),
+    KEY idx_allocation_run_teacher (allocation_task_id, generation_run_id, teacher_id)
+) COMMENT='模板片段-教师多值关联，主讲与助教均参与硬冲突';
+
+-- 一条教学任务通常关联一个或两个班级；关系表保证合班课可按每个班级稳定ID查询。
+CREATE TABLE IF NOT EXISTS schedule_template_fragment_class_group (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    template_fragment_id BIGINT NOT NULL,
+    fragment_code VARCHAR(255) NOT NULL,
+    template_id BIGINT NOT NULL,
+    template_code VARCHAR(64) NOT NULL,
+    allocation_task_id BIGINT NOT NULL,
+    generation_run_id VARCHAR(64) NULL,
+    teaching_task_id BIGINT NULL,
+    class_group_id BIGINT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_fragment_class_group (template_fragment_id, class_group_id),
+    KEY idx_template_class_group (template_id, class_group_id),
+    KEY idx_allocation_run_class_group (allocation_task_id, generation_run_id, class_group_id)
+) COMMENT='模板片段-班级多值关联，保留合班课的完整稳定ID';
 
 CREATE TABLE IF NOT EXISTS schedule_timetable_entry (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -112,7 +172,7 @@ CREATE TABLE IF NOT EXISTS schedule_timetable_entry (
     class_group_id BIGINT NULL,
     classroom_id BIGINT NULL,
     day_of_week INT NOT NULL,
-    period_index INT NOT NULL,
+    period_index INT NOT NULL COMMENT '45分钟原子节次，范围1-10',
     source_type VARCHAR(32) NOT NULL DEFAULT 'TEMPLATE' COMMENT 'TEMPLATE/MANUAL_ADJUSTED',
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

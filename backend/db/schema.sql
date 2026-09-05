@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS edu_flow_ai
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
@@ -24,7 +26,7 @@ CREATE TABLE IF NOT EXISTS teacher (
 CREATE TABLE IF NOT EXISTS teacher_profile (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     teacher_id BIGINT NOT NULL,
-    availability_matrix_json TEXT NULL COMMENT '教师固定周可用性矩阵 JSON，5x7，matrix[period-1][weekday-1]，-1不可用/0随意/1明确可用',
+    availability_matrix_json TEXT NULL COMMENT '教师固定周可用性矩阵 JSON，10x7，matrix[period-1][weekday-1]，每节45分钟，-1不可用/0随意/1明确可用',
     profile_note TEXT NULL COMMENT '教师其他排课说明，自然语言，由 LLM 解析为软约束',
     profile_preference_json TEXT NULL COMMENT '教师其他排课说明的 LLM 结构化解析结果 JSON',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS course (
     name VARCHAR(100) NOT NULL,
     code VARCHAR(32) NULL COMMENT '课程代码（如软184、云126）',
     credits DECIMAL(4,1) NULL COMMENT '学分',
-    course_type ENUM('理论课','上机课','实践课') NULL COMMENT '课程分类',
+    course_type ENUM('理论课','上机课','实验课','实践课') NULL COMMENT '课程分类；上机课/实验课每次默认连续4节',
     required_room_type ENUM('普通教室','机房') NULL COMMENT '所需教室类型：普通教室 / 机房（实践课为NULL）',
     required_hours INT NULL,
     description TEXT NULL,
@@ -97,7 +99,7 @@ CREATE TABLE IF NOT EXISTS time_slot (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     week_number INT NOT NULL,
     day_of_week INT NOT NULL,
-    period_index INT NOT NULL,
+    period_index INT NOT NULL COMMENT '45分钟原子节次，1-4上午、5-8下午、9-10晚上',
     label VARCHAR(50) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -113,6 +115,8 @@ CREATE TABLE IF NOT EXISTS teaching_task (
     assistant_teacher_id BIGINT NULL,
     classroom_id BIGINT NULL,
     total_hours INT NOT NULL,
+    sessions_per_week INT NULL COMMENT '每周授课次数；与duration_weeks同时为NULL时由引擎按总课时推导',
+    duration_weeks INT NULL COMMENT '持续教学周数；与sessions_per_week成对设置',
     required_room_type ENUM('普通教室','机房') NULL COMMENT '教学任务所需教室类型，从 course.required_room_type 继承或覆写',
     task_batch VARCHAR(64) NOT NULL DEFAULT 'DEFAULT' COMMENT '教学任务批次/学期/测试用例标识',
     notes TEXT NULL,
@@ -127,7 +131,11 @@ CREATE TABLE IF NOT EXISTS teaching_task (
     CONSTRAINT fk_teaching_task_course FOREIGN KEY (course_id) REFERENCES course (id),
     CONSTRAINT fk_teaching_task_teacher FOREIGN KEY (primary_teacher_id) REFERENCES teacher (id),
     CONSTRAINT fk_teaching_task_assistant FOREIGN KEY (assistant_teacher_id) REFERENCES teacher (id),
-    CONSTRAINT fk_teaching_task_classroom FOREIGN KEY (classroom_id) REFERENCES classroom (id) ON DELETE SET NULL
+    CONSTRAINT fk_teaching_task_classroom FOREIGN KEY (classroom_id) REFERENCES classroom (id) ON DELETE SET NULL,
+    CONSTRAINT chk_teaching_task_explicit_pattern CHECK (
+        (sessions_per_week IS NULL AND duration_weeks IS NULL)
+        OR (sessions_per_week > 0 AND duration_weeks BETWEEN 1 AND 52)
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- v2: 教学任务-班级关联（1-2个班级）
@@ -160,9 +168,11 @@ CREATE TABLE IF NOT EXISTS teaching_task_classroom (
 CREATE TABLE IF NOT EXISTS allocation_task (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(100) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'CREATED' COMMENT 'CREATED / RUNNING / GENERATED / NEEDS_MANUAL_REVIEW / BLOCKED / FAILED / CONFIRMED / CANCELLED',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_allocation_task_name (name)
+    UNIQUE KEY uk_allocation_task_name (name),
+    INDEX idx_allocation_task_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- v10: 排课任务生成配置快照（HARD 时间片裁剪 + V3 Placement/CP-SAT/教师画像 objective 权重）
@@ -171,7 +181,7 @@ CREATE TABLE IF NOT EXISTS allocation_task_generation_config (
     task_id BIGINT NOT NULL,
     allowed_weeks VARCHAR(128) NOT NULL DEFAULT '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18' COMMENT '允许参与排课的周次，多选结果，逗号分隔',
     allowed_weekdays VARCHAR(32) NOT NULL DEFAULT '1,2,3,4,5' COMMENT '允许参与排课的星期，多选结果，1=周一，7=周日',
-    allowed_periods VARCHAR(32) NOT NULL DEFAULT '1,2,3,4' COMMENT '允许参与排课的节次，多选结果，默认不排晚课',
+    allowed_periods VARCHAR(32) NOT NULL DEFAULT '1,2,3,4,5,6,7,8' COMMENT '允许自动排课的45分钟原子节次；默认1-8，第9-10节保留给人工调课',
     scheme_count INT NOT NULL DEFAULT 3 COMMENT '生成候选方案数量',
     placement_top_k INT NOT NULL DEFAULT 80 COMMENT 'Placement Model 每个任务保留的候选资源数量',
     raw_plan_count INT NOT NULL DEFAULT 240 COMMENT '每个任务生成的原始 task plan 数量',
@@ -180,7 +190,7 @@ CREATE TABLE IF NOT EXISTS allocation_task_generation_config (
     generation_mode VARCHAR(32) NOT NULL DEFAULT 'QUALITY' COMMENT 'V3 运行模式：FEASIBILITY/QUALITY/STRESS',
     teacher_profile_penalty_scale DECIMAL(10,4) NOT NULL DEFAULT 100.0000 COMMENT '教师画像 objective 权重倍率，100=默认，0=关闭，200=翻倍',
     early_period_penalty DECIMAL(10,6) NOT NULL DEFAULT 0.040000 COMMENT '早课惩罚（第1-2节）',
-    late_period_penalty DECIMAL(10,6) NOT NULL DEFAULT 0.030000 COMMENT '晚课惩罚（第4-5节）',
+    late_period_penalty DECIMAL(10,6) NOT NULL DEFAULT 0.030000 COMMENT '晚课惩罚（第9-10节）',
     weekend_penalty DECIMAL(10,6) NOT NULL DEFAULT 0.050000 COMMENT '周末排课惩罚',
     model_weight DECIMAL(5,2) NOT NULL DEFAULT 0.60 COMMENT 'L3 LightGBM 权重 (α)',
     llm_weight DECIMAL(5,2) NOT NULL DEFAULT 0.40 COMMENT 'L5 LLM 权重 (β)',
@@ -221,7 +231,7 @@ CREATE TABLE IF NOT EXISTS allocation_scheme (
     evaluation_summary TEXT NULL COMMENT '评估结果 JSON',
     policy VARCHAR(32) NULL COMMENT '生成策略名称',
     policy_params TEXT NULL COMMENT '生成策略参数 JSON',
-    model_version VARCHAR(16) NULL COMMENT '模型/排课链路版本，如 v3',
+    model_version VARCHAR(64) NULL COMMENT '模型/排课链路版本，如 v3.5-dynamic-week',
     conflict_summary TEXT NULL,
     valid BOOLEAN NOT NULL DEFAULT TRUE,
     status VARCHAR(30) NOT NULL DEFAULT 'CANDIDATE',
@@ -272,7 +282,7 @@ CREATE TABLE IF NOT EXISTS allocation_item (
     scheme_id BIGINT NOT NULL,
     teaching_task_id BIGINT NOT NULL,
     classroom_id BIGINT NOT NULL,
-    time_slot_id BIGINT NOT NULL,
+    time_slot_id BIGINT NOT NULL COMMENT '一次课起始原子时间片；理论/实践占连续2节，上机/实验占连续4节',
     teacher_profile_score DOUBLE NULL COMMENT '教师画像满足度分数 0-1',
     teacher_profile_penalty DOUBLE NULL COMMENT '教师画像软惩罚 0-1',
     teacher_profile_reasons_json TEXT NULL COMMENT '教师画像解释原因 JSON 数组',
@@ -296,7 +306,8 @@ CREATE TABLE IF NOT EXISTS course_assignment (
     source_scheme_id BIGINT NULL,
     teaching_task_id BIGINT NOT NULL,
     classroom_id BIGINT NOT NULL,
-    time_slot_id BIGINT NOT NULL,
+    time_slot_id BIGINT NOT NULL COMMENT '一次课起始原子时间片；理论/实践占连续2节，上机/实验占连续4节',
+    consecutive_slots INT NOT NULL DEFAULT 2 COMMENT '本次授课实际占用的45分钟原子节数；人工补课可为1',
     status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -307,8 +318,21 @@ CREATE TABLE IF NOT EXISTS course_assignment (
     CONSTRAINT fk_course_assignment_scheme FOREIGN KEY (source_scheme_id) REFERENCES allocation_scheme (id),
     CONSTRAINT fk_course_assignment_teaching_task FOREIGN KEY (teaching_task_id) REFERENCES teaching_task (id),
     CONSTRAINT fk_course_assignment_classroom FOREIGN KEY (classroom_id) REFERENCES classroom (id),
-    CONSTRAINT fk_course_assignment_time_slot FOREIGN KEY (time_slot_id) REFERENCES time_slot (id)
+    CONSTRAINT fk_course_assignment_time_slot FOREIGN KEY (time_slot_id) REFERENCES time_slot (id),
+    CONSTRAINT chk_course_assignment_consecutive_slots CHECK (consecutive_slots IN (1, 2, 4))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 全局发布互斥行：确认方案事务先 SELECT ... FOR UPDATE，避免不同排课任务并发发布后相互冲突。
+CREATE TABLE IF NOT EXISTS schedule_publication_lock (
+    id TINYINT PRIMARY KEY,
+    lock_name VARCHAR(64) NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_schedule_publication_lock_name (lock_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO schedule_publication_lock (id, lock_name)
+VALUES (1, 'GLOBAL_SCHEDULE_PUBLICATION')
+ON DUPLICATE KEY UPDATE lock_name = VALUES(lock_name);
 
 -- v3: 冲突检测结果（硬冲突、课时不一致等诊断）
 CREATE TABLE IF NOT EXISTS conflict_check_result (
