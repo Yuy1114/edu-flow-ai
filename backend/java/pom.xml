@@ -84,6 +84,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-restclient</artifactId>
     </dependency>
+
+    <!-- Multi-role timetable export writes real .xlsx workbooks. -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.4.1</version>
+    </dependency>
   </dependencies>
 
   <build>

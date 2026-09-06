@@ -1,4 +1,4 @@
-import { useTimetable } from "../hooks/useTimetable";
+import { EXPORT_ROLES, useTimetable } from "../hooks/useTimetable";
 import TimetableTable from "../ui/TimetableTable";
 import TimetableGrid from "../ui/TimetableGrid";
 
@@ -11,6 +11,7 @@ export default function TimetableManager() {
       <div className="card bg-base-100 shadow-sm mb-4">
         <div className="card-body p-4">
           <div className="flex flex-wrap items-end gap-3">
+            <div><label className="label pb-1 text-xs">排课任务</label><select className="select select-bordered select-sm min-w-44" value={t.filters.allocationTaskId} onChange={e => t.setFilters({...t.filters, allocationTaskId: e.target.value})}><option value="">全部排课任务</option>{t.allocationTasks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></div>
             <div><label className="label pb-1 text-xs">教师</label><select className="select select-bordered select-sm min-w-36" value={t.filters.teacherId} onChange={e => t.setFilters({...t.filters, teacherId: e.target.value})}><option value="">全部教师</option>{t.teachers.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></div>
             <div><label className="label pb-1 text-xs">班级</label><select className="select select-bordered select-sm min-w-40" value={t.filters.classGroupId} onChange={e => t.setFilters({...t.filters, classGroupId: e.target.value})}><option value="">全部班级</option>{t.classGroups.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></div>
             <div><label className="label pb-1 text-xs">课程</label><select className="select select-bordered select-sm min-w-44" value={t.filters.courseId} onChange={e => t.setFilters({...t.filters, courseId: e.target.value})}><option value="">全部课程</option>{t.courses.map(row => <option key={row.id} value={row.id}>{row.name}{row.code ? ` (${row.code})` : ""}</option>)}</select></div>
@@ -37,13 +38,24 @@ export default function TimetableManager() {
         </div>
       )}
 
-      {/* View toggle */}
-      <div className="flex items-center gap-3 mb-4">
+      {/* View toggle + 多角色导出 */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="join">
           <button className={`join-item btn btn-sm ${t.viewMode === "table" ? "btn-active" : ""}`} onClick={() => t.setViewMode("table")}>表格视图</button>
           <button className={`join-item btn btn-sm ${t.viewMode === "grid" ? "btn-active" : ""}`} onClick={() => t.setViewMode("grid")}>课程表视图</button>
         </div>
         <span className="text-sm text-base-content/50">共 {t.assignments.length} 条记录</span>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <span className="text-xs text-base-content/50">按当前筛选条件导出 Excel</span>
+          {EXPORT_ROLES.map(role => (
+            <button key={role.value} className="btn btn-outline btn-sm"
+              disabled={t.exporting !== null}
+              onClick={() => void t.exportTimetable(role.value)}>
+              {t.exporting === role.value && <span className="loading loading-spinner loading-xs" />}
+              {role.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {t.viewMode === "table" && <TimetableTable assignments={t.assignments} loading={t.loading} />}

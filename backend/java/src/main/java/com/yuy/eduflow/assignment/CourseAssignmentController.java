@@ -27,19 +27,21 @@ public class CourseAssignmentController {
 		@RequestParam(required = false) Long classGroupId,
 		@RequestParam(required = false) Long courseId,
 		@RequestParam(required = false) Long classroomId,
+		@RequestParam(required = false) Long allocationTaskId,
 		@RequestParam(required = false) Integer weekNumber,
 		@RequestParam(required = false) Integer dayOfWeek,
 		@RequestParam(required = false) String status
 	) {
-		return ApiResponse.success(courseAssignmentService.findViews(
+		return ApiResponse.success(courseAssignmentService.findViews(TimetableQuery.of(
 			teacherId,
 			classGroupId,
 			courseId,
 			classroomId,
+			allocationTaskId,
 			weekNumber,
 			dayOfWeek,
 			status
-		));
+		)));
 	}
 
 	@GetMapping("/{id}")

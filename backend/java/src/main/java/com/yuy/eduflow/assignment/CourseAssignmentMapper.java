@@ -99,15 +99,7 @@ public interface CourseAssignmentMapper {
 		@Param("teachingTaskId") Long teachingTaskId
 	);
 
-	List<CourseAssignmentView> findViews(
-		@Param("teacherId") Long teacherId,
-		@Param("classGroupId") Long classGroupId,
-		@Param("courseId") Long courseId,
-		@Param("classroomId") Long classroomId,
-		@Param("weekNumber") Integer weekNumber,
-		@Param("dayOfWeek") Integer dayOfWeek,
-		@Param("status") String status
-	);
+	List<CourseAssignmentView> findViews(@Param("q") TimetableQuery query);
 
 	List<CourseAssignment> findAll(
 		@Param("teacherId") Long teacherId,

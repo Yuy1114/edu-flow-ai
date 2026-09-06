@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import request from "../api/request";
+import { saveBlob } from "../lib/download";
 
 export interface Assignment {
   id: number;
@@ -38,8 +40,17 @@ export interface AssignmentHourAudit {
 
 const DEFAULT_FILTERS = {
   teacherId: "", classGroupId: "", courseId: "", classroomId: "",
-  weekNumber: "", dayOfWeek: "", status: "ACTIVE",
+  allocationTaskId: "", weekNumber: "", dayOfWeek: "", status: "ACTIVE",
 };
+
+export const EXPORT_ROLES = [
+  { value: "TEACHER", label: "教师课表" },
+  { value: "CLASS", label: "班级课表" },
+  { value: "CLASSROOM", label: "教室占用表" },
+  { value: "REGISTRAR", label: "教务总表" },
+] as const;
+
+export type ExportRole = (typeof EXPORT_ROLES)[number]["value"];
 
 const dayNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
@@ -53,7 +64,9 @@ export function useTimetable() {
   const [classGroups, setClassGroups] = useState<ReferenceOption[]>([]);
   const [courses, setCourses] = useState<ReferenceOption[]>([]);
   const [classrooms, setClassrooms] = useState<ReferenceOption[]>([]);
+  const [allocationTasks, setAllocationTasks] = useState<ReferenceOption[]>([]);
   const [hourAudit, setHourAudit] = useState<AssignmentHourAudit | null>(null);
+  const [exporting, setExporting] = useState<ExportRole | null>(null);
 
   useEffect(() => {
     void loadAssignments();
@@ -63,18 +76,20 @@ export function useTimetable() {
   async function loadReferenceData() {
     const unwrap = (value: any) => Array.isArray(value) ? value : value?.content ?? [];
     try {
-      const [teacherRows, classRows, courseRows, roomRows] = await Promise.all([
+      const [teacherRows, classRows, courseRows, roomRows, taskRows] = await Promise.all([
         request.get("/api/teachers"),
         request.get("/api/class-groups"),
         request.get("/api/courses"),
         request.get("/api/classrooms"),
+        request.get("/api/allocation-tasks"),
       ]);
       setTeachers(unwrap(teacherRows));
       setClassGroups(unwrap(classRows));
       setCourses(unwrap(courseRows));
       setClassrooms(unwrap(roomRows));
+      setAllocationTasks(unwrap(taskRows));
     } catch {
-      setTeachers([]); setClassGroups([]); setCourses([]); setClassrooms([]);
+      setTeachers([]); setClassGroups([]); setCourses([]); setClassrooms([]); setAllocationTasks([]);
     }
   }
 
@@ -116,6 +131,22 @@ export function useTimetable() {
     });
   }
 
+  /** 导出当前筛选条件下的课表；条件与页面查询完全一致，导出的就是屏幕上这份。 */
+  async function exportTimetable(role: ExportRole, activeFilters = filters) {
+    setExporting(role);
+    try {
+      const params = new URLSearchParams({ role });
+      Object.entries(activeFilters).forEach(([k, v]) => { if (v) params.append(k, v); });
+      const { blob, fileName } = await request.download(`/api/exports/timetable?${params.toString()}`);
+      saveBlob(blob, fileName || `${role}.xlsx`);
+      toast.success(`已导出 ${fileName || role}`);
+    } catch {
+      // 失败原因由响应拦截器统一提示（例如筛选过宽导致分表过多）
+    } finally {
+      setExporting(null);
+    }
+  }
+
   function resetFilters() {
     setFilters(DEFAULT_FILTERS);
     void loadAssignments(DEFAULT_FILTERS);
@@ -125,10 +156,11 @@ export function useTimetable() {
     assignments, hourAudit, loading, viewMode, setViewMode,
     currentWeek, setCurrentWeek,
     filters, setFilters,
-    teachers, classGroups, courses, classrooms,
+    teachers, classGroups, courses, classrooms, allocationTasks,
     weekItems, allWeeks, dayNames,
     itemsAtSlot,
     loadAssignments,
     resetFilters,
+    exportTimetable, exporting,
   };
 }

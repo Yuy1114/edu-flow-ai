@@ -7,6 +7,9 @@
                c.id AS course_id, c.name AS course_name,
                pt.id AS teacher_id,
 		       CONCAT_WS('、', pt.name, CASE WHEN ast.id != pt.id THEN ast.name END) AS teacher_name,
+		       pt.id AS primary_teacher_id, pt.name AS primary_teacher_name,
+		       CASE WHEN ast.id != pt.id THEN ast.id END AS assistant_teacher_id,
+		       CASE WHEN ast.id != pt.id THEN ast.name END AS assistant_teacher_name,
                cr.id AS classroom_id, cr.name AS classroom_name,
                ts.id AS time_slot_id, ts.label AS time_slot_label,
 		       ts.week_number, ts.day_of_week, ts.period_index, ca.consecutive_slots,
@@ -16,7 +19,10 @@
                 JOIN class_group cg ON ttcg.class_group_id = cg.id
                 WHERE ttcg.teaching_task_id = tt.id) AS class_group_name,
                (SELECT ttcg.class_group_id FROM teaching_task_class_group ttcg
-                WHERE ttcg.teaching_task_id = tt.id LIMIT 1) AS class_group_id
+                WHERE ttcg.teaching_task_id = tt.id LIMIT 1) AS class_group_id,
+               (SELECT GROUP_CONCAT(ttcg.class_group_id ORDER BY ttcg.class_group_id SEPARATOR ',')
+                FROM teaching_task_class_group ttcg
+                WHERE ttcg.teaching_task_id = tt.id) AS class_group_ids
         FROM course_assignment ca
         JOIN teaching_task tt ON ca.teaching_task_id = tt.id
         JOIN course c ON tt.course_id = c.id
@@ -25,29 +31,35 @@
         JOIN classroom cr ON ca.classroom_id = cr.id
         JOIN time_slot ts ON ca.time_slot_id = ts.id
         WHERE 1 = 1
-        <if test='teacherId != null'>
-		  AND (tt.primary_teacher_id = #{teacherId} OR tt.assistant_teacher_id = #{teacherId})
+        <if test='q.teacherId != null'>
+		  AND (tt.primary_teacher_id = #{q.teacherId} OR tt.assistant_teacher_id = #{q.teacherId})
         </if>
-        <if test='classGroupId != null'>
+        <if test='q.classGroupId != null'>
           AND EXISTS (
             SELECT 1 FROM teaching_task_class_group ttcg2
-            WHERE ttcg2.teaching_task_id = tt.id AND ttcg2.class_group_id = #{classGroupId}
+            WHERE ttcg2.teaching_task_id = tt.id AND ttcg2.class_group_id = #{q.classGroupId}
           )
         </if>
-		<if test='courseId != null'>
-		  AND tt.course_id = #{courseId}
+		<if test='q.courseId != null'>
+		  AND tt.course_id = #{q.courseId}
 		</if>
-		<if test='classroomId != null'>
-		  AND ca.classroom_id = #{classroomId}
+		<if test='q.classroomId != null'>
+		  AND ca.classroom_id = #{q.classroomId}
 		</if>
-        <if test='weekNumber != null'>
-          AND ts.week_number = #{weekNumber}
+        <if test='q.allocationTaskId != null'>
+          AND EXISTS (
+            SELECT 1 FROM allocation_task_teaching_task att
+            WHERE att.teaching_task_id = tt.id AND att.allocation_task_id = #{q.allocationTaskId}
+          )
         </if>
-        <if test='dayOfWeek != null'>
-          AND ts.day_of_week = #{dayOfWeek}
+        <if test='q.weekNumber != null'>
+          AND ts.week_number = #{q.weekNumber}
         </if>
-        <if test='status != null and status != ""'>
-          AND ca.status = #{status}
+        <if test='q.dayOfWeek != null'>
+          AND ts.day_of_week = #{q.dayOfWeek}
+        </if>
+        <if test='q.status != null and q.status != ""'>
+          AND ca.status = #{q.status}
         </if>
         ORDER BY ts.week_number ASC, ts.day_of_week ASC, ts.period_index ASC, ca.id ASC
     </select>
@@ -88,7 +100,10 @@
 		       ca.classroom_id, ca.time_slot_id, ca.consecutive_slots, ca.status, ca.created_at, ca.updated_at,
                tt.course_id, tt.primary_teacher_id AS teacher_id,
                (SELECT ttcg.class_group_id FROM teaching_task_class_group ttcg
-                WHERE ttcg.teaching_task_id = tt.id LIMIT 1) AS class_group_id
+                WHERE ttcg.teaching_task_id = tt.id LIMIT 1) AS class_group_id,
+               (SELECT GROUP_CONCAT(ttcg.class_group_id ORDER BY ttcg.class_group_id SEPARATOR ',')
+                FROM teaching_task_class_group ttcg
+                WHERE ttcg.teaching_task_id = tt.id) AS class_group_ids
         FROM course_assignment ca
         JOIN teaching_task tt ON ca.teaching_task_id = tt.id
         WHERE ca.id = #{id}

@@ -74,40 +74,25 @@ public class CourseAssignmentService {
 		return courseAssignmentMapper.findAll(teacherId, classGroupId, courseId, classroomId, normalizeStatus(status), weekNumber);
 	}
 
-	public List<CourseAssignmentView> findViews(
-		Long teacherId,
-		Long classGroupId,
-		Long courseId,
-		Long classroomId,
-		Integer weekNumber,
-		Integer dayOfWeek,
-		String status
-	) {
-		validateOptionalId(teacherId, "教师ID必须大于0");
-		validateOptionalId(classGroupId, "班级ID必须大于0");
-		validateOptionalId(courseId, "课程ID必须大于0");
-		validateOptionalId(classroomId, "教室ID必须大于0");
-		validateOptionalWeekNumber(weekNumber);
-		validateOptionalDayOfWeek(dayOfWeek);
-		return courseAssignmentMapper.findViews(
-			teacherId,
-			classGroupId,
-			courseId,
-			classroomId,
-			weekNumber,
-			dayOfWeek,
-			normalizeStatus(status)
-		);
+	public List<CourseAssignmentView> findViews(TimetableQuery query) {
+		validateOptionalId(query.teacherId(), "教师ID必须大于0");
+		validateOptionalId(query.classGroupId(), "班级ID必须大于0");
+		validateOptionalId(query.courseId(), "课程ID必须大于0");
+		validateOptionalId(query.classroomId(), "教室ID必须大于0");
+		validateOptionalId(query.allocationTaskId(), "排课任务ID必须大于0");
+		validateOptionalWeekNumber(query.weekNumber());
+		validateOptionalDayOfWeek(query.dayOfWeek());
+		return courseAssignmentMapper.findViews(query.withStatus(normalizeStatus(query.status())));
 	}
 
 	public List<CourseAssignmentView> findTeacherAssignments(Long teacherId, Integer weekNumber, Integer dayOfWeek) {
 		Assert.positiveId(teacherId, "教师ID");
-		return findViews(teacherId, null, null, null, weekNumber, dayOfWeek, null);
+		return findViews(TimetableQuery.of(teacherId, null, null, null, null, weekNumber, dayOfWeek, null));
 	}
 
 	public List<CourseAssignmentView> findClassGroupAssignments(Long classGroupId, Integer weekNumber, Integer dayOfWeek) {
 		Assert.positiveId(classGroupId, "班级ID");
-		return findViews(null, classGroupId, null, null, weekNumber, dayOfWeek, null);
+		return findViews(TimetableQuery.of(null, classGroupId, null, null, null, weekNumber, dayOfWeek, null));
 	}
 
 	public CourseAssignment findById(Long id) {
