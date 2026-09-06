@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import unittest
 
-from ingest.apply_import_review import _importable_pattern
+from ingest.apply_import_review import _categorize, _importable_pattern
 from ingest.parse_schedule_excel import (
     Occurrence,
     _clean_course_name,
     _derive_pattern,
     _span_from_column_header,
+    _trainable_verdict,
 )
 
 
@@ -113,6 +114,62 @@ class ImportablePatternTest(unittest.TestCase):
 
         self.assertIsNone(pattern["sessions_per_week"])
         self.assertIn("不自洽", pattern["note"])
+
+
+class TrainableVerdictTest(unittest.TestCase):
+    def course(self, **overrides) -> dict[str, object]:
+        row = {"schedulable": "true", "exclude_reason": "", "required_hours": "32"}
+        row.update(overrides)
+        return row
+
+    def pattern(self, **overrides) -> dict[str, object]:
+        row = {"sessions_per_week": 2, "observed_hours": 32, "pattern_regular": "true"}
+        row.update(overrides)
+        return row
+
+    def test_a_clean_course_is_trainable(self) -> None:
+        verdict = _trainable_verdict(self.course(), self.pattern())
+
+        self.assertEqual(verdict["trainable"], "true")
+        self.assertEqual(verdict["untrainable_reason"], "")
+
+    def test_an_unschedulable_course_is_not_training_data(self) -> None:
+        """毕业实习这类课程由虚拟教师带、不占常规教室，学不出排课行为。"""
+        verdict = _trainable_verdict(
+            self.course(schedulable="false", exclude_reason="毕业实习无需排课"), self.pattern())
+
+        self.assertEqual(verdict["trainable"], "false")
+        self.assertIn("毕业实习", verdict["untrainable_reason"])
+
+    def test_hours_that_disagree_with_the_timetable_need_a_human_first(self) -> None:
+        verdict = _trainable_verdict(self.course(), self.pattern(observed_hours=48))
+
+        self.assertEqual(verdict["trainable"], "false")
+        self.assertIn("48", verdict["untrainable_reason"])
+
+    def test_an_irregular_rhythm_needs_a_human_first(self) -> None:
+        verdict = _trainable_verdict(self.course(), self.pattern(pattern_regular="false"))
+
+        self.assertEqual(verdict["trainable"], "false")
+
+
+class ImportOutcomeTest(unittest.TestCase):
+    def test_the_five_categories_separate_a_human_skip_from_a_system_anomaly(self) -> None:
+        """跳过是人工说"不动"，异常是系统没能应用。混成一类，异常就看不见了。"""
+        review_items = [{"review_type": "conflict"}, {"review_type": "conflict"}, {"review_type": "new_item"}]
+        plan = [
+            {"action": "create:course"},
+            {"action": "update:classroom.capacity"},
+            {"action": "keep_db:classroom"},
+            {"action": "ignore:course"},
+        ]
+        skipped = [{"reason": "dependencies not resolved"}]
+
+        outcome = _categorize(review_items, plan, skipped)
+
+        self.assertEqual(outcome, {
+            "created": 1, "updated": 1, "conflicts": 2, "anomalies": 1, "skipped": 2,
+        })
 
 
 if __name__ == "__main__":

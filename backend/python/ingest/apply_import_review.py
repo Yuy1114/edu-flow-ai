@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,7 @@ def apply_review(*, input_dir: Path, execute: bool = False) -> dict[str, Any]:
     finally:
         conn.close()
 
+    outcome = _categorize(data["review_items"], plan, skipped)
     report = {
         "status": "applied" if execute else "dry_run_ok",
         "execute": execute,
@@ -71,13 +73,92 @@ def apply_review(*, input_dir: Path, execute: bool = False) -> dict[str, Any]:
         "decision_count": len(decisions),
         "planned_count": len(plan),
         "skipped_count": len(skipped),
+        "outcome_counts": outcome,
         "planned_counts": _counts(plan, "action"),
         "skipped_counts": _counts(skipped, "reason"),
         "planned_preview": plan[:80],
         "skipped_preview": skipped[:80],
     }
+    if execute:
+        report["import_batch_id"] = _record_batch(
+            input_dir=input_dir,
+            data=data,
+            decisions=decisions,
+            outcome=outcome,
+            report=report,
+        )
     (input_dir / "import_apply_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+def _categorize(review_items: list[dict[str, str]], plan: list[dict[str, Any]], skipped: list[dict[str, Any]]) -> dict[str, int]:
+    """把一次导入的结果分成新增 / 更新 / 冲突 / 异常 / 跳过五类。
+
+    冲突是复核项本身的属性（有多少字段两边不一致），另外四类是这次执行的去向。
+    异常与跳过要分开：跳过是人工明确说"不动"，异常是系统没能应用（依赖没解析出来、
+    字段不支持自动落库、merge 没填值），后者必须留在报告里让人看见。
+    """
+    explicit_skip = sum(1 for item in plan if item.get("action", "").startswith(("ignore:", "keep_db:")))
+    return {
+        "created": sum(1 for item in plan if item.get("action", "").startswith("create:")),
+        "updated": sum(1 for item in plan if item.get("action", "").startswith("update:")),
+        "conflicts": sum(1 for row in review_items if _clean(row.get("review_type")) == "conflict"),
+        "anomalies": len(skipped),
+        "skipped": explicit_skip,
+    }
+
+
+def _record_batch(
+    *,
+    input_dir: Path,
+    data: dict[str, Any],
+    decisions: list[dict[str, str]],
+    outcome: dict[str, int],
+    report: dict[str, Any],
+) -> int | None:
+    """把这次落库记进 import_batch 台账。
+
+    台账失败不能反过来把已经提交的导入回滚掉——数据已经在库里了，
+    丢掉台账行只是少了一条来源记录，谎报导入失败要糟糕得多。
+    """
+    task_batches = sorted({
+        _clean(row.get("task_batch")) for row in data["teaching_tasks"] if _clean(row.get("task_batch"))
+    })
+    summary = {
+        "outcome_counts": outcome,
+        "planned_counts": report["planned_counts"],
+        "skipped_counts": report["skipped_counts"],
+        "task_batches": task_batches,
+    }
+    conn = connect(load_db_config())
+    try:
+        with conn.cursor() as cur:
+            conn.begin()
+            cur.execute(
+                """
+                INSERT INTO import_batch (source_name, source_kind, task_batch, imported_by, status,
+                                          decision_count, created_count, updated_count, conflict_count,
+                                          anomaly_count, skipped_count, summary_json)
+                VALUES (%s, %s, %s, %s, 'APPLIED', %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(input_dir), "DIRECTORY",
+                    task_batches[0] if task_batches else "DEFAULT",
+                    os.getenv("EDU_FLOW_IMPORT_OPERATOR", "local-demo-operator"),
+                    len(decisions), outcome["created"], outcome["updated"], outcome["conflicts"],
+                    outcome["anomalies"], outcome["skipped"],
+                    json.dumps(summary, ensure_ascii=False),
+                ),
+            )
+            cur.execute("SELECT LAST_INSERT_ID() AS id")
+            batch_id = int(cur.fetchone()["id"])
+            conn.commit()
+            return batch_id
+    except Exception as exception:  # noqa: BLE001 - 台账写入失败不应回滚已提交的导入
+        print(f"[IMPORT] 导入已落库，但 import_batch 台账写入失败: {exception}", file=sys.stderr, flush=True)
+        return None
+    finally:
+        conn.close()
 
 
 def _apply_decision(cur, row: dict[str, str], context: dict[str, Any], *, execute: bool) -> None:
@@ -88,8 +169,8 @@ def _apply_decision(cur, row: dict[str, str], context: dict[str, Any], *, execut
     if decision in {"ignore", "keep_db"}:
         context["plan"].append(_plan(row, f"{decision}:{entity_type}", "不修改数据库"))
         return
-    if review_type == "conflict" and decision == "use_import":
-        _apply_conflict_use_import(cur, row, context, execute=execute)
+    if review_type == "conflict" and decision in {"use_import", "merge"}:
+        _apply_conflict_value(cur, row, context, execute=execute)
         return
     if review_type == "new_item" and decision in {"create", "create_after_dependencies"}:
         if entity_type == "course":
@@ -110,11 +191,22 @@ def _apply_decision(cur, row: dict[str, str], context: dict[str, Any], *, execut
     context["skipped"].append(_skip(row, f"unsupported decision: {decision}"))
 
 
-def _apply_conflict_use_import(cur, row: dict[str, str], context: dict[str, Any], *, execute: bool) -> None:
+def _apply_conflict_value(cur, row: dict[str, str], context: dict[str, Any], *, execute: bool) -> None:
+    """把一个字段冲突的最终取值落库。
+
+    use_import 采用导入值；merge 采用复核人在 merged_value 里写下的第三个值
+    （例如两边都不完全对，人工给出正确的教室容量）。merge 没写值等同于没有决定，
+    必须显式拒绝而不是悄悄退回导入值。
+    """
     entity_type = _clean(row.get("entity_type"))
     entity_key = _clean(row.get("entity_key"))
     field_name = _clean(row.get("field_name"))
-    import_value = _clean(row.get("import_value"))
+    decision = _clean(row.get("decision"))
+    merged_value = _clean(row.get("merged_value"))
+    if decision == "merge" and not merged_value:
+        context["skipped"].append(_skip(row, "merge decision without merged_value"))
+        return
+    import_value = merged_value if decision == "merge" else _clean(row.get("import_value"))
     db_id = _clean(row.get("db_id"))
     sql_map = {
         ("course", "course_name"): ("course", "name"),
@@ -136,7 +228,8 @@ def _apply_conflict_use_import(cur, row: dict[str, str], context: dict[str, Any]
         return
     table, column = target
     value = _typed_value(import_value, field_name)
-    context["plan"].append(_plan(row, f"update:{table}.{column}", f"{entity_key}: {column} = {value}"))
+    source = "人工合并值" if decision == "merge" else "导入值"
+    context["plan"].append(_plan(row, f"update:{table}.{column}", f"{entity_key}: {column} = {value}（{source}）"))
     if execute:
         cur.execute(f"UPDATE {table} SET {column} = %s WHERE id = %s", (value, db_id))
 

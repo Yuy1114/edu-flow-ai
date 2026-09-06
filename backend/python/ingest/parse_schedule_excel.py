@@ -232,6 +232,7 @@ def parse_schedule_excel(
         "course_id", "course_code", "course_name", "teacher_name", "class_name", "class_names", "total_hours", "required_room_type",
         "sessions_per_week", "duration_weeks", "session_slots", "observed_hours",
         "pattern_source", "pattern_regular", "active_weeks",
+        "trainable", "untrainable_reason",
         "task_batch", "schedulable", "exclude_reason", "source",
     ])
     _write_csv(output_dir / "timetable_occurrences.csv", [_occurrence_row(item, details_by_code) for item in occurrences], [
@@ -924,8 +925,30 @@ def _build_teaching_tasks(
             "exclude_reason": course["exclude_reason"],
             "source": "schedule_excel",
             **pattern,
+            **_trainable_verdict(course, pattern),
         })
     return rows
+
+
+def _trainable_verdict(course: dict[str, Any], pattern: dict[str, Any]) -> dict[str, str]:
+    """这条任务的课表记录能不能直接当训练样本。
+
+    只标记，不丢弃：样本仍然导出，由训练阶段决定要不要用。静默把可疑记录混进
+    训练集，会让模型学到一个学校从没执行过的课表。
+    """
+    if str(course.get("schedulable")) != "true":
+        return {"trainable": "false",
+                "untrainable_reason": course.get("exclude_reason") or "课程不需要常规排课"}
+    if not pattern.get("sessions_per_week"):
+        return {"trainable": "false", "untrainable_reason": "课表中没有可用的授课记录"}
+    declared = _safe_int(course.get("required_hours"))
+    observed = _safe_int(pattern.get("observed_hours"))
+    if declared and observed and declared != observed:
+        return {"trainable": "false",
+                "untrainable_reason": f"声明{declared}课时与课表实测{observed}课时不一致，待人工确认"}
+    if pattern.get("pattern_regular") != "true":
+        return {"trainable": "false", "untrainable_reason": "各周授课次数不一致，待人工确认"}
+    return {"trainable": "true", "untrainable_reason": ""}
 
 
 def _derive_pattern(course_code: str, occurrences: list[Occurrence]) -> dict[str, Any]:

@@ -81,6 +81,13 @@ def extract(
         occurrences = _read_csv(class_dir / "timetable_occurrences.csv")
         class_groups = _read_csv(class_dir / "class_groups.csv")
         local_class_groups = {_clean(row.get("class_name")): row for row in class_groups if _clean(row.get("class_name"))}
+        # 可训练判定是任务级的（声明课时与课表对不上、各周次数不规则等），
+        # 按课程代码带到它的每一条占用记录上。
+        verdicts = {
+            _clean(row.get("course_code")): row
+            for row in _read_csv(class_dir / "teaching_tasks.csv")
+            if _clean(row.get("course_code"))
+        }
 
         for item in occurrences:
             course_code = _clean(item.get("course_code"))
@@ -116,10 +123,13 @@ def extract(
                 "resource_key": f"{_clean(item.get('classroom_name'))}|{_safe_int(item.get('day_of_week'))}|{_safe_int(item.get('period_index'))}",
                 "classroom_capacity": 80,
                 "source_key": f"{course_code}|{teacher_name}|{class_name}",
+                "trainable": _clean(verdicts.get(course_code, {}).get("trainable")) != "false",
+                "untrainable_reason": _clean(verdicts.get(course_code, {}).get("untrainable_reason")),
             }
             if sample["classroom_name"] and sample["day_of_week"] > 0 and sample["period_index"] > 0:
                 all_samples.append(sample)
                 stats["valid_occurrences"] += 1
+                stats["trainable_occurrences" if sample["trainable"] else "untrainable_occurrences"] += 1
             else:
                 skipped.append({"class_name": class_name, "course_code": course_code, "reason": "missing classroom/day/period"})
                 stats["skipped_missing_fields"] += 1

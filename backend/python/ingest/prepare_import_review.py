@@ -34,6 +34,7 @@ REVIEW_FIELDS = [
     "import_value",
     "status",
     "decision",
+    "merged_value",
     "allowed_decisions",
     "recommended_decision",
     "reason",
@@ -41,7 +42,9 @@ REVIEW_FIELDS = [
 ]
 
 DECISIONS = {
-    "conflict": "keep_db,use_import,ignore",
+    # merge 表示人工给出第三个值：既不保留旧值也不采用导入值，
+    # 由复核人在 merged_value 列写下要落库的最终值。
+    "conflict": "keep_db,use_import,merge,ignore",
     "new_item": "create,ignore",
     "teaching_task": "create_after_dependencies,create,ignore",
 }
@@ -71,6 +74,7 @@ def prepare_review(*, input_dir: Path, output_dir: Path | None = None) -> dict[s
             "import_value": row.get("import_value", ""),
             "status": "PENDING_CONFLICT",
             "decision": "",
+            "merged_value": "",
             "allowed_decisions": DECISIONS["conflict"],
             "recommended_decision": _recommend_conflict(row),
             "reason": row.get("reason", ""),
@@ -91,6 +95,7 @@ def prepare_review(*, input_dir: Path, output_dir: Path | None = None) -> dict[s
             "import_value": row.get("display_name", ""),
             "status": "PENDING_CREATE",
             "decision": "",
+            "merged_value": "",
             "allowed_decisions": _allowed_decisions_for_new_item(row),
             "recommended_decision": _recommend_new_item(row),
             "reason": row.get("reason", ""),
