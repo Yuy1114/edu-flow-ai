@@ -11,7 +11,7 @@ from scheduler.fetch_allocation_teaching_tasks import (
 
 class FormalInputContractTest(unittest.TestCase):
     def test_malformed_availability_is_rejected_instead_of_becoming_fully_available(self) -> None:
-        with self.assertRaisesRegex(ValueError, "5x7 or 10x7"):
+        with self.assertRaisesRegex(ValueError, "5x7, 10x7 or 11x7"):
             _parse_unavailable_matrix(7, json.dumps([[0] * 6 for _ in range(10)]))
         with self.assertRaisesRegex(ValueError, "only accepts"):
             _parse_unavailable_matrix(7, json.dumps([[0] * 7 for _ in range(9)] + [[0, 0, 0, 0, 0, 0, 2]]))

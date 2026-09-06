@@ -34,8 +34,8 @@ DEFAULT_REPORT_PATH = OUTPUT_DIR / "phase_cover_report.json"
 DEFAULT_UNRESOLVED_PATH = OUTPUT_DIR / "phase_cover_unresolved.jsonl"
 
 DEFAULT_ALLOWED_WEEKDAYS = frozenset(range(1, 6))
-# 完整校历每天 10 个 45 分钟原子小节：4（上午）+ 4（下午）+ 2（晚上）。
-ALL_DAY_PERIODS = frozenset(range(1, 11))
+# 完整校历每天 11 个 45 分钟原子小节：4（上午）+ 4（下午）+ 3（晚上 19:10-21:35）。
+ALL_DAY_PERIODS = frozenset(range(1, 12))  # 每天11节：上午1-4、下午5-8、晚上9-11
 MORNING_PERIODS = frozenset(range(1, 5))
 AFTERNOON_PERIODS = frozenset(range(5, 9))
 EVENING_PERIODS = frozenset(range(9, 11))

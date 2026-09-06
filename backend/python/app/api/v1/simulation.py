@@ -449,7 +449,7 @@ def _template_grids(cover: dict) -> list[dict]:
             "week_label": _week_label(template.get("week_numbers") or []),
             "cells": [
                 {"day": day, "period": period, "count": len(cells[(day, period)]), "items": cells[(day, period)][:3]}
-                for day in range(1, 6) for period in range(1, 11)
+                for day in range(1, 6) for period in range(1, 12)
             ],
         })
     return grids

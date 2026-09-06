@@ -418,17 +418,28 @@ def _parse_unavailable_matrix(teacher_id: int, raw_json: str) -> list[dict[str, 
         matrix = json.loads(raw_json)
     except (TypeError, json.JSONDecodeError) as exception:
         raise ValueError(f"teacher {teacher_id} availability is not valid JSON") from exception
-    if not isinstance(matrix, list) or len(matrix) not in {5, 10}:
-        raise ValueError(f"teacher {teacher_id} availability must be a 5x7 or 10x7 matrix")
+    if not isinstance(matrix, list) or len(matrix) not in {5, 10, 11}:
+        raise ValueError(f"teacher {teacher_id} availability must be a 5x7, 10x7 or 11x7 matrix")
     for row in matrix:
         if not isinstance(row, list) or len(row) != 7:
-            raise ValueError(f"teacher {teacher_id} availability must be a 5x7 or 10x7 matrix")
+            raise ValueError(f"teacher {teacher_id} availability must be a 5x7, 10x7 or 11x7 matrix")
         for value in row:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"teacher {teacher_id} availability only accepts -1, 0 and 1")
             if int(value) != value or int(value) not in {-1, 0, 1}:
                 raise ValueError(f"teacher {teacher_id} availability only accepts -1, 0 and 1")
-    normalized = [row for block in matrix for row in (block, block)] if len(matrix) == 5 else matrix
+    # 旧的 5 大块矩阵：前四块各两节，晚间大块是三节（第 9-11 节）；
+    # 旧的 10 节矩阵：第 11 节沿用第 10 节的晚间取值。二者都归一到 11 行。
+    if len(matrix) == 5:
+        normalized = [
+            row
+            for index, block in enumerate(matrix)
+            for row in ([block] * (3 if index == len(matrix) - 1 else 2))
+        ]
+    elif len(matrix) == 10:
+        normalized = list(matrix) + [matrix[-1]]
+    else:
+        normalized = matrix
     slots: list[dict[str, Any]] = []
     for period_index, row in enumerate(normalized, start=1):
         for day_of_week, value in enumerate(row, start=1):

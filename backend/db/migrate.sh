@@ -59,5 +59,6 @@ apply_migration "010_schedule_publication_lock" "010_schedule_publication_lock.s
 apply_migration "011_schedule_template_fragment_week" "011_schedule_template_fragment_week.sql"
 apply_migration "012_validate_atomic_time_axis" "012_validate_atomic_time_axis.sql"
 apply_migration "013_validate_course_assignment_span" "013_validate_course_assignment_span.sql"
+apply_migration "014_extend_evening_to_period_11" "014_extend_evening_to_period_11.sql"
 
 echo "database migrations complete"

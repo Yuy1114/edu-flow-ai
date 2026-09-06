@@ -1,6 +1,6 @@
 export const PERIOD_MINUTES = 45;
 
-export const ALL_PERIODS = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
+export const ALL_PERIODS = Object.freeze(Array.from({ length: 11 }, (_, index) => index + 1));
 export const AUTO_SCHEDULING_PERIODS = Object.freeze(ALL_PERIODS.slice(0, 8));
 export const EVENING_PERIODS = Object.freeze(ALL_PERIODS.slice(8));
 
@@ -22,10 +22,10 @@ export function periodDetailLabel(period: number): string {
 
 export function parsePeriodSelection(value: unknown): number[] {
   if (Array.isArray(value)) {
-    return value.map(Number).filter(period => Number.isInteger(period) && period >= 1 && period <= 10);
+    return value.map(Number).filter(period => Number.isInteger(period) && period >= 1 && period <= 11);
   }
   if (typeof value === "string") {
-    return value.split(",").map(Number).filter(period => Number.isInteger(period) && period >= 1 && period <= 10);
+    return value.split(",").map(Number).filter(period => Number.isInteger(period) && period >= 1 && period <= 11);
   }
   return [...AUTO_SCHEDULING_PERIODS];
 }

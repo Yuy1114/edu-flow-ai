@@ -178,7 +178,9 @@ class SchedulerConstraintAlignmentTest(unittest.TestCase):
                     total_weeks=2,
                 )
 
-    def test_ten_period_teacher_availability_is_preserved(self) -> None:
+    def test_ten_period_teacher_availability_carries_into_the_eleventh(self) -> None:
+        """旧的 10 节矩阵没有第 11 节。晚间语义相同，因此第 10 节的禁排要带到第 11 节，
+        否则时间轴扩到 11 节之后，教师的晚间禁排会在最后一节上凭空失效。"""
         matrix = [[0] * 7 for _ in range(10)]
         matrix[9][6] = -1
         raw = json.dumps(matrix)
@@ -187,12 +189,11 @@ class SchedulerConstraintAlignmentTest(unittest.TestCase):
         task_slots = _parse_unavailable_matrix(77, raw)
 
         self.assertIn((7, 10), repository_slots)
-        self.assertEqual(task_slots, [{
-            "teacher_id": 77,
-            "week_number": None,
-            "day_of_week": 7,
-            "period_index": 10,
-        }])
+        self.assertIn((7, 11), repository_slots)
+        self.assertEqual(
+            [(slot["day_of_week"], slot["period_index"]) for slot in task_slots],
+            [(7, 10), (7, 11)],
+        )
 
     def test_legacy_five_block_availability_expands_to_atomic_period_pairs(self) -> None:
         matrix = [[0] * 7 for _ in range(5)]

@@ -17,7 +17,7 @@ def _parse_profile_preference(raw_json: str) -> dict[str, Any]:
 
 
 def _parse_availability_matrix_unavailable(raw_json: str) -> set[tuple[int, int]]:
-    """Parse 10×7 atomic-period matrix; -1 means fixed weekly unavailable."""
+    """Parse 11×7 atomic-period matrix; -1 means fixed weekly unavailable."""
     slots: set[tuple[int, int]] = set()
     if not raw_json or not raw_json.strip():
         return slots
@@ -27,9 +27,20 @@ def _parse_availability_matrix_unavailable(raw_json: str) -> set[tuple[int, int]
         return slots
     if not isinstance(matrix, list):
         return slots
-    # Backward compatibility: the old profile used five two-period blocks.
-    # Duplicate each row so its meaning is preserved on the 10×7 atomic axis.
-    normalized = [row for block in matrix for row in (block, block)] if len(matrix) == 5 else matrix[:10]
+    # Backward compatibility on the 11×7 atomic axis: the oldest profile used
+    # five blocks (four two-period ones plus the three-period evening block);
+    # the previous one used ten periods, whose evening value carries to the
+    # eleventh. Anything longer is truncated rather than trusted.
+    if len(matrix) == 5:
+        normalized = [
+            row
+            for index, block in enumerate(matrix)
+            for row in ([block] * (3 if index == len(matrix) - 1 else 2))
+        ]
+    elif len(matrix) == 10:
+        normalized = list(matrix) + [matrix[-1]]
+    else:
+        normalized = matrix[:11]
     for period_index, row in enumerate(normalized, start=1):
         if not isinstance(row, list):
             continue
@@ -139,7 +150,7 @@ def fetch_time_slots(connection) -> list[dict[str, Any]]:
     )
 
 
-def ensure_default_time_slots(connection, *, weeks: int = 18, weekdays: int = 7, periods: int = 10) -> int:
+def ensure_default_time_slots(connection, *, weeks: int = 18, weekdays: int = 7, periods: int = 11) -> int:
     """Seed default time slots only when the table is empty.
 
     Returns the number of inserted rows. Existing time_slot data is never

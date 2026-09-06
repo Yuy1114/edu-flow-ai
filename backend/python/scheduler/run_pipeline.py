@@ -377,7 +377,7 @@ def _validate_allowed_config(
     configured_domains = {
         "allowed_weeks": (allowed_weeks, set(range(1, total_weeks + 1))),
         "allowed_weekdays": (allowed_weekdays, set(range(1, 8))),
-        "allowed_periods": (allowed_periods, set(range(1, 11))),
+        "allowed_periods": (allowed_periods, set(range(1, 12))),
     }
     for name, (values, legal) in configured_domains.items():
         if values is None:

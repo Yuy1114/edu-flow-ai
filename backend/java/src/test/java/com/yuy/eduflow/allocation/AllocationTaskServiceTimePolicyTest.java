@@ -45,18 +45,19 @@ class AllocationTaskServiceTimePolicyTest {
 	@Test
 	void permitsEveningPeriodsWhenAnOperatorExplicitlyEnablesThem() {
 		stubTaskInsert();
-		service.create(new AllocationTaskRequest("人工晚间排课", null, null, null, List.of(), config("9,10")));
+		service.create(new AllocationTaskRequest("人工晚间排课", null, null, null, List.of(), config("9,10,11")));
 
 		ArgumentCaptor<AllocationTaskGenerationConfig> captor = ArgumentCaptor.forClass(AllocationTaskGenerationConfig.class);
 		verify(generationConfigMapper).insert(captor.capture());
-		assertEquals("9,10", captor.getValue().getAllowedPeriods());
+		// 学校晚上是 19:10-21:35 的三节大块，第 11 节是合法的人工时段。
+		assertEquals("9,10,11", captor.getValue().getAllowedPeriods());
 	}
 
 	@Test
-	void rejectsAnEleventhPeriod() {
+	void rejectsATwelfthPeriod() {
 		assertThrows(
 			ValidationException.class,
-			() -> service.create(new AllocationTaskRequest("非法节次", null, null, null, List.of(), config("11")))
+			() -> service.create(new AllocationTaskRequest("非法节次", null, null, null, List.of(), config("12")))
 		);
 		verify(generationConfigMapper, never()).insert(any());
 	}

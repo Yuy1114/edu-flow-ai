@@ -99,7 +99,7 @@ docs/
 核心思路: 绝对周占位 → 已完成任务释放资源 → 按周课表签名派生动态模板
 
 输入接口: Java 仅传 allocation_task_id
-时间坐标: 每天10个45分钟原子小节；自动默认工作日1-8，9-10和周末保留人工使用
+时间坐标: 每天11个45分钟原子小节；自动默认工作日1-8，9-11和周末保留人工使用
 决策粒度: 每个 teaching_task 按 pattern 在 (week, day, period, classroom) 上占位
 求解方式: 硬约束全枚举 + 贪心放置 + 1~2任务局部重排；失败只标待人工，不证明无解
 落库:     schedule_template / _week / _fragment / _fragment_slot 及教师、班级多值关系表

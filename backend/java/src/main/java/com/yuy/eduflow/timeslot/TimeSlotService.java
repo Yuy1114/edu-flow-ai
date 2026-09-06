@@ -40,7 +40,7 @@ public class TimeSlotService {
 
 	private ValidationException canonicalCatalogIsReadOnly() {
 		return new ValidationException(
-			"标准时间槽目录固定为18周×7天×10个45分钟原子节（4+4+2），运行期只读；请通过数据库迁移维护"
+			"标准时间槽目录固定为18周×7天×11个45分钟原子节（4+4+3），运行期只读；请通过数据库迁移维护"
 		);
 	}
 

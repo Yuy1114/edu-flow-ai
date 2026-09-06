@@ -222,7 +222,7 @@ def build_time_slots() -> list[TimeSlotRow]:
         )
         for week in range(1, 19)
         for day in range(1, 8)
-        for period in range(1, 11)
+        for period in range(1, 12)
     ]
 
 

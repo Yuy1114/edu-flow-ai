@@ -153,7 +153,7 @@ def import_time_slots(cur) -> dict[tuple, int]:
     count = 0
     for w in range(1, 19):
         for d in range(1, 8):
-            for p in range(1, 11):
+            for p in range(1, 12):
                 label = f"第{w}周 {day_names[d]} 第{p}节"
                 cur.execute(sql, (w, d, p, label))
                 cur.execute(

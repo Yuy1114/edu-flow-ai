@@ -63,11 +63,14 @@ def _pattern(
 
 class DynamicWeekSchedulerTest(unittest.TestCase):
     def test_time_axis_is_four_plus_four_plus_two(self) -> None:
-        self.assertEqual(sorted(ALL_DAY_PERIODS), list(range(1, 11)))
+        self.assertEqual(sorted(ALL_DAY_PERIODS), list(range(1, 12)))
         self.assertEqual(sorted(DEFAULT_ALLOWED_PERIODS), list(range(1, 9)))
         self.assertEqual(sorted(EVENING_PERIODS), [9, 10])
-        self.assertEqual(_valid_starts(2, list(range(1, 11))), [1, 3, 5, 7, 9])
-        self.assertEqual(_valid_starts(4, list(range(1, 11))), [1, 5])
+        # 第11节没有第12节可接，所以它不是2节连堂的合法起点；
+        # 晚间三节大块里，2节课落在9-10，第11节只能单独补1节。
+        self.assertEqual(_valid_starts(2, list(range(1, 12))), [1, 3, 5, 7, 9])
+        self.assertIn(11, _valid_starts(1, list(range(1, 12))))
+        self.assertEqual(_valid_starts(4, list(range(1, 12))), [1, 5])
         self.assertEqual(_consecutive_slots("实验课", "普通教室"), 4)
         self.assertEqual(_consecutive_slots("实践课", ""), 2)
 
