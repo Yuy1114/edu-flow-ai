@@ -111,6 +111,10 @@ class Occurrence:
     classroom_name: str
     day_of_week: int
     period_index: int
+    # 课表的列是"大节"，不是原子小节：12/34/56/78 各占 2 节，91011 占 3 节。
+    # period_index 是大节的起始小节，consecutive_slots 是它实际占用的小节数。
+    # 少了这一列，下游会把一次 2 节的课当成 1 节，课时直接减半。
+    consecutive_slots: int
     week_index: int
     row_index: int
     col_index: int
@@ -226,11 +230,13 @@ def parse_schedule_excel(
     ])
     _write_csv(output_dir / "teaching_tasks.csv", teaching_tasks, [
         "course_id", "course_code", "course_name", "teacher_name", "class_name", "class_names", "total_hours", "required_room_type",
+        "sessions_per_week", "duration_weeks", "session_slots", "observed_hours",
+        "pattern_source", "pattern_regular", "active_weeks",
         "task_batch", "schedulable", "exclude_reason", "source",
     ])
     _write_csv(output_dir / "timetable_occurrences.csv", [_occurrence_row(item, details_by_code) for item in occurrences], [
         "class_name", "course_id", "course_code", "course_name", "teacher_name", "classroom_name", "day_of_week",
-        "period_index", "week_index", "row_index", "col_index", "sheet_name", "raw_cell",
+        "period_index", "consecutive_slots", "week_index", "row_index", "col_index", "sheet_name", "raw_cell",
     ])
 
     unmatched_occurrence_codes = sorted({
@@ -465,21 +471,23 @@ def _detect_period_rows(cells: list[Cell]) -> dict[int, int]:
     return result
 
 
-def _detect_day_period_columns(cells: list[Cell], day_cols: dict[int, int]) -> dict[int, tuple[int, int]]:
+def _detect_day_period_columns(cells: list[Cell], day_cols: dict[int, int]) -> dict[int, tuple[int, int, int]]:
+    """列 -> (星期, 大节起始小节, 大节占用小节数)。"""
     if not day_cols:
         return {}
     header_by_col: dict[int, list[str]] = defaultdict(list)
     for cell in cells:
         if cell.row <= 5:
             header_by_col[cell.col].append(cell.value.strip())
-    result: dict[int, tuple[int, int]] = {}
+    result: dict[int, tuple[int, int, int]] = {}
     sorted_day_cols = sorted(day_cols.items())
     for index, (start_col, day) in enumerate(sorted_day_cols):
         end_col = sorted_day_cols[index + 1][0] if index + 1 < len(sorted_day_cols) else start_col + 5
         for col in range(start_col, end_col):
-            period = _period_from_column_headers(header_by_col.get(col, []))
+            headers = header_by_col.get(col, [])
+            period = _period_from_column_headers(headers)
             if period:
-                result[col] = (day, period)
+                result[col] = (day, period, _span_from_column_headers(headers))
     return result
 
 
@@ -489,6 +497,24 @@ def _period_from_column_headers(values: list[str]) -> int | None:
         if period:
             return period
     return None
+
+
+def _span_from_column_headers(values: list[str]) -> int:
+    for value in values:
+        if _period_from_column_header(value):
+            return _span_from_column_header(value)
+    return 1
+
+
+def _span_from_column_header(value: str) -> int:
+    """大节占用的原子小节数。晚间 9-11 是 19:10-21:35 的三节大块，其余都是两节。"""
+    normalized = _clean_token(value)
+    if normalized in {"91011", "9-10-11", "9、10、11"}:
+        return 3
+    if normalized in {"12", "1-2", "1、2", "34", "3-4", "3、4",
+                      "56", "5-6", "5、6", "78", "7-8", "7、8"}:
+        return 2
+    return 1
 
 
 def _period_from_column_header(value: str) -> int | None:
@@ -522,14 +548,15 @@ def _extract_occurrences(
     class_name: str,
     day_cols: dict[int, int],
     period_rows: dict[int, int],
-    day_period_cols: dict[int, tuple[int, int]] | None = None,
+    day_period_cols: dict[int, tuple[int, int, int]] | None = None,
 ) -> list[Occurrence]:
     result: list[Occurrence] = []
     for cell in cells:
         day = None
         period = None
+        span = 1
         if day_period_cols and cell.col in day_period_cols:
-            day, period = day_period_cols[cell.col]
+            day, period, span = day_period_cols[cell.col]
         else:
             day = day_cols.get(cell.col)
             period = period_rows.get(cell.row)
@@ -543,6 +570,7 @@ def _extract_occurrences(
                 classroom_name=classroom_name,
                 day_of_week=day,
                 period_index=period,
+                consecutive_slots=span,
                 week_index=_week_from_row(cell.row, cell.value),
                 row_index=cell.row,
                 col_index=cell.col,
@@ -613,8 +641,8 @@ def _sheet_trace(
             "detected_period_rows": _int_key_map(detected_period_rows),
             "effective_period_rows": _int_key_map(period_rows),
             "day_period_columns": {
-                str(col): {"day_of_week": day, "period_index": period}
-                for col, (day, period) in sorted(day_period_cols.items())
+                str(col): {"day_of_week": day, "period_index": period, "consecutive_slots": span}
+                for col, (day, period, span) in sorted(day_period_cols.items())
             },
             "used_day_fallback": used_day_fallback,
             "used_period_fallback": used_period_fallback,
@@ -881,6 +909,7 @@ def _build_teaching_tasks(
             continue
         detail = details_by_code.get(code)
         teacher_names = _join_names(detail.teachers) if detail else ""
+        pattern = _derive_pattern(code, occurrences)
         rows.append({
             "course_id": course.get("course_id", ""),
             "course_code": code,
@@ -894,8 +923,41 @@ def _build_teaching_tasks(
             "schedulable": course["schedulable"],
             "exclude_reason": course["exclude_reason"],
             "source": "schedule_excel",
+            **pattern,
         })
     return rows
+
+
+def _derive_pattern(course_code: str, occurrences: list[Occurrence]) -> dict[str, Any]:
+    """从课表网格反推教学节奏。
+
+    真实课表是"周 × 星期 × 大节"的网格，它直接说明了这门课每周上几次、连续上几周、
+    一次占几节。这些事实原本被丢掉，教学任务只带 total_hours，排课引擎只能退回按
+    课时查表推断（`pattern_builder` 的 fallback）。这里把它们如实记下来。
+
+    `pattern_regular` 为 false 表示各周次数不一致（例如单双周、期中停课），
+    此时 sessions_per_week 取众数，需要人工确认而不是直接采信。
+    """
+    mine = [item for item in occurrences if item.course_code == course_code and item.week_index > 0]
+    if not mine:
+        return {
+            "sessions_per_week": "", "duration_weeks": "", "session_slots": "",
+            "observed_hours": "", "pattern_source": "", "pattern_regular": "",
+            "active_weeks": "",
+        }
+    per_week = Counter(item.week_index for item in mine)
+    session_slots = Counter(item.consecutive_slots for item in mine).most_common(1)[0][0]
+    sessions_per_week = Counter(per_week.values()).most_common(1)[0][0]
+    observed_hours = sum(item.consecutive_slots for item in mine)
+    return {
+        "sessions_per_week": sessions_per_week,
+        "duration_weeks": len(per_week),
+        "session_slots": session_slots,
+        "observed_hours": observed_hours,
+        "pattern_source": "timetable",
+        "pattern_regular": str(len(set(per_week.values())) == 1).lower(),
+        "active_weeks": ",".join(str(week) for week in sorted(per_week)),
+    }
 
 
 def _occurrence_row(item: Occurrence, details_by_code: dict[str, CourseDetail]) -> dict[str, Any]:
@@ -909,6 +971,7 @@ def _occurrence_row(item: Occurrence, details_by_code: dict[str, CourseDetail]) 
         "classroom_name": item.classroom_name,
         "day_of_week": item.day_of_week,
         "period_index": item.period_index,
+        "consecutive_slots": item.consecutive_slots,
         "week_index": item.week_index,
         "row_index": item.row_index,
         "col_index": item.col_index,
@@ -1169,9 +1232,14 @@ def _join_names(values: list[str]) -> str:
     return ",".join(result)
 
 
+# 课程说明是一整行连排的：`…室[08202]【专】48人     游戏策划与运营(游248)…`。
+# `【专】48人` 是上一门课的班型与人数标注，会粘到下一门课的名字前面。
+_NAME_PREFIX_NOISE = re.compile(r"^(?:【[^】]{1,6}】|\d+人|[，,;；、\s])+")
+
+
 def _clean_course_name(value: str) -> str:
     text = re.sub(r"\s+", "", value or "").strip(" ，,;；")
-    return re.sub(r"^\d+人", "", text)
+    return _NAME_PREFIX_NOISE.sub("", text)
 
 
 def _is_valid_course_name(value: str) -> bool:

@@ -109,6 +109,9 @@ def extract(
                 "classroom_name": _clean(item.get("classroom_name")),
                 "day_of_week": _safe_int(item.get("day_of_week")),
                 "period_index": _safe_int(item.get("period_index")),
+                # 一条记录是一次授课，占 consecutive_slots 个原子小节。少了这一列，
+                # 样本会把 2 节的课当成 1 节，学出来的落位和课时都是错的。
+                "consecutive_slots": max(1, _safe_int(item.get("consecutive_slots")) or 1),
                 "slot_label": f"{_safe_int(item.get('day_of_week'))}|{_safe_int(item.get('period_index'))}",
                 "resource_key": f"{_clean(item.get('classroom_name'))}|{_safe_int(item.get('day_of_week'))}|{_safe_int(item.get('period_index'))}",
                 "classroom_capacity": 80,
@@ -137,7 +140,7 @@ def extract(
         "feature_dimensions": {
             "text_features": TEXT_FEATURES,
             "numeric_features": NUMERIC_FEATURES,
-            "label_columns": ["classroom_name", "day_of_week", "period_index", "resource_key", "slot_label"],
+            "label_columns": ["classroom_name", "day_of_week", "period_index", "consecutive_slots", "resource_key", "slot_label"],
         },
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)

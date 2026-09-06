@@ -264,14 +264,24 @@ def _create_teaching_task(cur, review_row: dict[str, str], context: dict[str, An
         return None
     primary_teacher_id = teachers[0]["id"]
     assistant_teacher_id = teachers[1]["id"] if len(teachers) > 1 else None
+    pattern = _importable_pattern(row, total_hours)
     notes = "imported_from_schedule_excel"
-    context["plan"].append({"action": "create:teaching_task", "entity_key": entity_key, "display_name": review_row.get("display_name"), "details": "创建教学任务"})
+    if pattern["note"]:
+        notes = f"{notes}; {pattern['note']}"
+    context["plan"].append({
+        "action": "create:teaching_task",
+        "entity_key": entity_key,
+        "display_name": review_row.get("display_name"),
+        "details": "创建教学任务" + ("（含课表节奏）" if pattern["sessions_per_week"] else "（节奏待人工确认）"),
+    })
     if execute:
         cur.execute("""
-            INSERT INTO teaching_task (course_id, primary_teacher_id, assistant_teacher_id, classroom_id, total_hours, required_room_type, task_batch, notes, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO teaching_task (course_id, primary_teacher_id, assistant_teacher_id, classroom_id, total_hours,
+                                       sessions_per_week, duration_weeks, required_room_type, task_batch, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             course["id"], primary_teacher_id, assistant_teacher_id, None, total_hours,
+            pattern["sessions_per_week"], pattern["duration_weeks"],
             row.get("required_room_type") or None, row.get("task_batch") or "DEFAULT",
             notes, ACTIVE,
         ))
@@ -281,6 +291,34 @@ def _create_teaching_task(cur, review_row: dict[str, str], context: dict[str, An
             cur.execute("INSERT INTO teaching_task_class_group (teaching_task_id, class_group_id) VALUES (%s, %s)", (task_id, class_group["id"]))
         return task_id
     return None
+
+
+def _importable_pattern(row: dict[str, str], total_hours: int) -> dict[str, Any]:
+    """课表网格给出的教学节奏，只在它自洽时才写进库。
+
+    `teaching_task` 的入口校验要求 每周次数 × 持续周数 × 每次课时 == 总课时。
+    真实数据里声明课时和课表实测课时经常对不上（节假日停课、补课、课程说明本身
+    就是计划值），此时不能猜：把节奏留空让引擎按课时推导，并在 notes 里写清楚
+    实测值，交由人工确认。静默写入一个不自洽的 pattern 会让课时审计从一开始就错。
+    """
+    empty = {"sessions_per_week": None, "duration_weeks": None, "note": ""}
+    sessions = _int_or_default(row.get("sessions_per_week"), 0)
+    weeks = _int_or_default(row.get("duration_weeks"), 0)
+    session_slots = _int_or_default(row.get("session_slots"), 0)
+    observed = _int_or_default(row.get("observed_hours"), 0)
+    if not sessions or not weeks or not session_slots:
+        return empty
+    if _clean(row.get("pattern_regular")) != "true":
+        return {**empty, "note": f"课表节奏不规则(每周{sessions}次×{weeks}周, 实测{observed}课时)，待人工确认"}
+    if observed != total_hours:
+        return {**empty, "note": f"声明{total_hours}课时与课表实测{observed}课时不一致，节奏待人工确认"}
+    if sessions * weeks * session_slots != total_hours:
+        return {**empty, "note": f"课表节奏与总课时不自洽(每周{sessions}次×{weeks}周×每次{session_slots}节≠{total_hours})，待人工确认"}
+    return {
+        "sessions_per_week": sessions,
+        "duration_weeks": weeks,
+        "note": f"节奏来自课表(每周{sessions}次×{weeks}周×每次{session_slots}节)",
+    }
 
 
 def _default_department(context: dict[str, Any]) -> str:
