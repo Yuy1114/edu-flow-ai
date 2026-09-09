@@ -108,4 +108,22 @@ public class MlApiClient {
 			.retrieve()
 			.body(Map.class);
 	}
+
+	// ── Dataset quality board ─────────────────────────────────────────
+
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> datasetBoard() {
+		return restClient.get()
+			.uri("/api/ml/dataset/board")
+			.retrieve()
+			.body(Map.class);
+	}
+
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> datasetSummary() {
+		return restClient.get()
+			.uri("/api/ml/dataset/summary")
+			.retrieve()
+			.body(Map.class);
+	}
 }

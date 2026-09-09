@@ -61,5 +61,6 @@ apply_migration "012_validate_atomic_time_axis" "012_validate_atomic_time_axis.s
 apply_migration "013_validate_course_assignment_span" "013_validate_course_assignment_span.sql"
 apply_migration "014_extend_evening_to_period_11" "014_extend_evening_to_period_11.sql"
 apply_migration "015_import_batch" "015_import_batch.sql"
+apply_migration "016_dataset_quality_snapshot" "016_dataset_quality_snapshot.sql"
 
 echo "database migrations complete"

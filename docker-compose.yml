@@ -47,11 +47,14 @@ services:
       EDU_FLOW_PIPELINE_TIMEOUT_SECONDS: ${EDU_FLOW_PIPELINE_TIMEOUT_SECONDS:-1800}
       EDU_FLOW_SIMULATION_DIR: /var/lib/edu-flow-ai/simulations
       EDU_FLOW_PIPELINE_LOG_DIR: /var/lib/edu-flow-ai/pipeline-jobs
+      EDU_FLOW_DATASET_DIR: /workspace/backend/data/parsed/history_training_dataset_v2
     ports:
       - "${ML_API_HOST_PORT:-8000}:8000"
     volumes:
       - simulation_data:/var/lib/edu-flow-ai/simulations
       - pipeline_data:/workspace/backend/data/pipeline
+      # 训练语料只读挂载：它不进镜像也不进库，但质检台要能读到。
+      - ./backend/data/parsed/history_training_dataset_v2:/workspace/backend/data/parsed/history_training_dataset_v2:ro
       - pipeline_job_data:/var/lib/edu-flow-ai/pipeline-jobs
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ml/health', timeout=3)" ]
