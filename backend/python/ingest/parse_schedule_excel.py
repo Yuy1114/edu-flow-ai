@@ -68,6 +68,15 @@ DETAIL_PATTERN = re.compile(
     re.S,
 )
 COURSE_CODE_PATTERN = re.compile(r"^(?:[\u4e00-\u9fa5]{1,4}|[A-Za-z]{1,6})\d{2,4}$")
+# 课表格子里的子区间标注，例如 高166(9-10)：晚间大节只用前两节。
+PERIOD_ANNOTATION_PATTERN = re.compile(r"[\(（]\s*(\d{1,2})\s*[-~－]\s*(\d{1,2})\s*[\)）]")
+# 教学周网格里合法出现的非教学内容：考试周、法定假日、集中活动。
+# 它们不是解析失败，不该占用质量分；但仍然计数，便于核对。
+NON_TEACHING_MARKERS = (
+    "考试", "四、六级", "报到", "注册",
+    "运动会", "校运会", "军训", "实习", "放假",
+    "国庆", "中秋", "元旦", "清明", "端午", "五一", "春节", "劳动节",
+)
 CLASSROOM_PATTERN = re.compile(r"^\d{4,6}$")
 RESOURCE_POINT_PATTERN = re.compile(r"^(?:xn|XN)\d{2,5}$")
 LETTER_RESOURCE_POINT_PATTERN = re.compile(r"^[jJ]\d{3,5}$")
@@ -176,13 +185,15 @@ def parse_schedule_excel(
             warnings.append({"sheet": sheet_name, "warning": "未识别到节次行，尝试按行号顺序兜底"})
             period_rows = _fallback_period_rows(cells)
             used_period_fallback = True
-        sheet_occurrences = _extract_occurrences(cells, sheet_name, class_name_value, day_cols, period_rows, day_period_cols)
+        sheet_occurrences, sheet_unparsed, sheet_non_teaching = _extract_occurrences(cells, sheet_name, class_name_value, day_cols, period_rows, day_period_cols)
         occurrences.extend(sheet_occurrences)
         sheet_traces.append(_sheet_trace(
             sheet_name=sheet_name,
             cells=cells,
             details=sheet_details,
             occurrences=sheet_occurrences,
+            unparsed_cells=sheet_unparsed,
+            non_teaching_cells=sheet_non_teaching,
             detected_day_cols=detected_day_cols,
             day_cols=day_cols,
             detected_period_rows=detected_period_rows,
@@ -550,8 +561,10 @@ def _extract_occurrences(
     day_cols: dict[int, int],
     period_rows: dict[int, int],
     day_period_cols: dict[int, tuple[int, int, int]] | None = None,
-) -> list[Occurrence]:
+) -> tuple[list[Occurrence], list[dict[str, Any]], list[dict[str, Any]]]:
     result: list[Occurrence] = []
+    unparsed: list[dict[str, Any]] = []
+    non_teaching: list[dict[str, Any]] = []
     for cell in cells:
         day = None
         period = None
@@ -564,21 +577,36 @@ def _extract_occurrences(
         if not day or not period:
             continue
         parsed = _parse_timetable_cell(cell.value)
-        for course_code, classroom_name in parsed:
+        if not parsed:
+            # 只看教学周行；表头行（星期一 / 91011）本来就不含课程。考试周和假日
+            # 是合法的非教学内容，单独计数；剩下的才是真正没解释的丢弃，必须报警。
+            if _week_from_row(cell.row, cell.value) > 0:
+                bucket = non_teaching if _is_non_teaching_marker(cell.value) else unparsed
+                bucket.append({"row": cell.row, "col": cell.col, "value": cell.value})
+            continue
+        for course_code, classroom_name, override in parsed:
+            occurrence_period = period
+            occurrence_span = span
+            if override:
+                start, length = override
+                # 子区间必须落在本列大节内部，否则以列头为准。
+                if period <= start and start + length <= period + span:
+                    occurrence_period = start
+                    occurrence_span = length
             result.append(Occurrence(
                 class_name=class_name,
                 course_code=course_code,
                 classroom_name=classroom_name,
                 day_of_week=day,
-                period_index=period,
-                consecutive_slots=span,
+                period_index=occurrence_period,
+                consecutive_slots=occurrence_span,
                 week_index=_week_from_row(cell.row, cell.value),
                 row_index=cell.row,
                 col_index=cell.col,
                 sheet_name=sheet_name,
                 raw_cell=cell.value,
             ))
-    return result
+    return result, unparsed, non_teaching
 
 
 def _week_from_row(row_index: int, value: str) -> int:
@@ -590,10 +618,44 @@ def _week_from_row(row_index: int, value: str) -> int:
     return 0
 
 
-def _parse_timetable_cell(value: str) -> list[tuple[str, str]]:
+def _is_non_teaching_marker(value: str) -> bool:
+    text = _clean(value)
+    return any(marker in text for marker in NON_TEACHING_MARKERS)
+
+
+def _split_period_annotation(token: str) -> tuple[str, tuple[int, int] | None]:
+    """剥离形如 ``高166(9-10)`` 的子区间标注，返回 (课程代码, (起始节次, 连续节数))。
+
+    晚间 91011 是 19:10-21:35 的三节大块，只上两节的课在格子里写成 ``(9-10)``。
+    不剥离标注，课程代码就匹配不上 COURSE_CODE_PATTERN，整条记录会被静默丢弃。
+    """
+    match = PERIOD_ANNOTATION_PATTERN.search(token)
+    if not match:
+        return token, None
+    code = _clean_token(PERIOD_ANNOTATION_PATTERN.sub("", token))
+    start = _safe_int(match.group(1))
+    end = _safe_int(match.group(2))
+    if start <= 0 or end < start:
+        return code, None
+    return code, (start, end - start + 1)
+
+
+def _parse_timetable_cell(value: str) -> list[tuple[str, str, tuple[int, int] | None]]:
     text = value.replace("\r", " ").replace("\n", " ").replace("，", " ").replace(",", " ").replace("；", " ").replace(";", " ").replace("/", " ")
-    result: list[tuple[str, str]] = []
-    tokens = [_clean_token(token) for token in re.split(r"\s+", text) if _clean_token(token)]
+    result: list[tuple[str, str, tuple[int, int] | None]] = []
+    raw_tokens = [_clean_token(token) for token in re.split(r"\s+", text) if _clean_token(token)]
+    tokens: list[str] = []
+    overrides: list[tuple[int, int] | None] = []
+    # 标注也可能单独成一个 token（例如 "(9-10) 公共体育"），此时作用于整格。
+    shared_override: tuple[int, int] | None = None
+    for raw_token in raw_tokens:
+        code, override = _split_period_annotation(raw_token)
+        if not code:
+            if override:
+                shared_override = override
+            continue
+        tokens.append(code)
+        overrides.append(override)
     for index, token in enumerate(tokens):
         if _is_resource_point(token):
             continue
@@ -602,17 +664,15 @@ def _parse_timetable_cell(value: str) -> list[tuple[str, str]]:
         classroom = ""
         for next_token in tokens[index + 1:]:
             if COURSE_CODE_PATTERN.match(next_token):
-                if _is_resource_point(next_token):
-                    break
                 break
             if _is_importable_classroom_token(next_token):
                 classroom = next_token
                 break
             if _is_resource_point(next_token):
                 break
-        result.append((token, classroom))
+        result.append((token, classroom, overrides[index] or shared_override))
     if not result and PUBLIC_PHYSICAL_EDUCATION in text:
-        result.append((PUBLIC_PHYSICAL_EDUCATION, ""))
+        result.append((PUBLIC_PHYSICAL_EDUCATION, "", shared_override))
     return result
 
 
@@ -622,6 +682,8 @@ def _sheet_trace(
     cells: list[Cell],
     details: list[CourseDetail],
     occurrences: list[Occurrence],
+    unparsed_cells: list[dict[str, Any]],
+    non_teaching_cells: list[dict[str, Any]],
     detected_day_cols: dict[int, int],
     day_cols: dict[int, int],
     detected_period_rows: dict[int, int],
@@ -653,6 +715,9 @@ def _sheet_trace(
         "course_detail_cells": sorted([{"row": row, "col": col} for row, col in detail_cells], key=lambda item: (item["row"], item["col"])),
         "occurrence_count": len(occurrences),
         "occurrence_cell_count": len(occurrence_cells),
+        "unparsed_grid_cell_count": len(unparsed_cells),
+        "unparsed_grid_cells_preview": unparsed_cells[:40],
+        "non_teaching_grid_cell_count": len(non_teaching_cells),
         "occurrence_cells_preview": sorted([{"row": row, "col": col} for row, col in occurrence_cells], key=lambda item: (item["row"], item["col"]))[:80],
         "course_codes": sorted({item.course_code for item in occurrences}),
     }
@@ -732,6 +797,16 @@ def _build_quality_report(
             issues.append(_quality_issue("period_fallback", "warning", "节次使用行号兜底识别", sheet=trace.get("sheet_name")))
         if trace.get("course_detail_count", 0) == 0 and trace.get("occurrence_count", 0) > 0:
             issues.append(_quality_issue("sheet_missing_course_details", "info", "sheet 有课表记录但无课程详情", sheet=trace.get("sheet_name")))
+        unparsed_count = int(trace.get("unparsed_grid_cell_count", 0) or 0)
+        if unparsed_count:
+            # 静默丢格子是最贵的失败方式：曾经整批晚间课消失，质量分仍是 100。
+            issues.append(_quality_issue(
+                "unparsed_grid_cells",
+                "warning",
+                f"{unparsed_count} 个网格单元格未解析出任何课程记录",
+                sheet=trace.get("sheet_name"),
+                count=unparsed_count,
+            ))
 
     for code in unmatched_occurrence_codes:
         issues.append(_quality_issue("occurrence_without_detail", "warning", f"课表中出现课程代码 {code}，但课程详情区未匹配", course_code=code))

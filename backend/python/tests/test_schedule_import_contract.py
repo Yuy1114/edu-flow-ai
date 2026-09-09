@@ -10,10 +10,15 @@ import unittest
 
 from ingest.apply_import_review import _categorize, _importable_pattern
 from ingest.parse_schedule_excel import (
+    Cell,
     Occurrence,
     _clean_course_name,
     _derive_pattern,
+    _extract_occurrences,
+    _is_non_teaching_marker,
+    _parse_timetable_cell,
     _span_from_column_header,
+    _split_period_annotation,
     _trainable_verdict,
 )
 
@@ -174,3 +179,72 @@ class ImportOutcomeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EveningSubRangeTest(unittest.TestCase):
+    """晚间大节是三节，但只上两节的课在格子里写成 高166(9-10)。
+
+    这个标注曾经让整条记录消失：课程代码带上括号后匹配不了 COURSE_CODE_PATTERN，
+    _parse_timetable_cell 返回空列表，而质量分照样是 100。抽样 120 份历史课表就有
+    924 个这样的格子，全部是晚间课——训练集因此一条晚间样本都没有，"避开晚课"
+    这类教师偏好永远学不出来。
+    """
+
+    def test_annotation_is_stripped_and_kept(self) -> None:
+        self.assertEqual(_split_period_annotation("高166(9-10)"), ("高166", (9, 2)))
+        self.assertEqual(_split_period_annotation("高166"), ("高166", None))
+
+    def test_annotated_cell_still_yields_the_course(self) -> None:
+        self.assertEqual(
+            _parse_timetable_cell("高166(9-10)\r\n08203"),
+            [("高166", "08203", (9, 2))],
+        )
+
+    def test_sub_range_narrows_the_span_inside_the_evening_block(self) -> None:
+        """列头说 9-11 共三节，格子说只用 9-10，最终应落成第 9 节起两节。"""
+        cells = [Cell(row=5, col=7, value="高166(9-10)\r\n08203")]
+        occurrences, unparsed, non_teaching = _extract_occurrences(
+            cells, "推荐课表", "软工1班", {}, {}, {7: (1, 9, 3)},
+        )
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0].period_index, 9)
+        self.assertEqual(occurrences[0].consecutive_slots, 2)
+        self.assertEqual((unparsed, non_teaching), ([], []))
+
+    def test_unannotated_evening_cell_keeps_all_three_periods(self) -> None:
+        cells = [Cell(row=5, col=7, value="高166\r\n08203")]
+        occurrences, _, _ = _extract_occurrences(
+            cells, "推荐课表", "软工1班", {}, {}, {7: (1, 9, 3)},
+        )
+        self.assertEqual(occurrences[0].period_index, 9)
+        self.assertEqual(occurrences[0].consecutive_slots, 3)
+
+    def test_sub_range_outside_the_block_defers_to_the_column_header(self) -> None:
+        """标注和列头冲突时以列头为准，不能让一个坏标注把课排到别的大节去。"""
+        cells = [Cell(row=5, col=7, value="高166(1-2)\r\n08203")]
+        occurrences, _, _ = _extract_occurrences(
+            cells, "推荐课表", "软工1班", {}, {}, {7: (1, 9, 3)},
+        )
+        self.assertEqual(occurrences[0].period_index, 9)
+        self.assertEqual(occurrences[0].consecutive_slots, 3)
+
+
+class GridDropVisibilityTest(unittest.TestCase):
+    """解析不出来的格子必须留下痕迹。静默丢弃是最贵的失败方式。"""
+
+    def test_exam_and_holiday_cells_are_not_parse_failures(self) -> None:
+        for marker in ["考试", "期末考试", "国庆节", "报到注册", "运动会"]:
+            self.assertTrue(_is_non_teaching_marker(marker), marker)
+        self.assertFalse(_is_non_teaching_marker("高166"))
+
+    def test_unexplained_cell_is_recorded_rather_than_dropped(self) -> None:
+        cells = [
+            Cell(row=5, col=7, value="考试"),
+            Cell(row=6, col=7, value="某种没见过的东西"),
+        ]
+        occurrences, unparsed, non_teaching = _extract_occurrences(
+            cells, "推荐课表", "软工1班", {}, {}, {7: (1, 9, 3)},
+        )
+        self.assertEqual(occurrences, [])
+        self.assertEqual([item["value"] for item in non_teaching], ["考试"])
+        self.assertEqual([item["value"] for item in unparsed], ["某种没见过的东西"])
