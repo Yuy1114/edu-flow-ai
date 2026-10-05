@@ -154,16 +154,18 @@ def create_fixture(label: str) -> dict[str, Any]:
 
 
 def wait_for_generation(task_id: int) -> dict[str, Any]:
+    """提交生成作业并轮询到终态，顺带量一下"按下生成到状态终态"的整条链路耗时。"""
+    started = time.monotonic()
     api("POST", f"/api/allocation-tasks/{task_id}/templates/generate", {
         "totalWeeks": 6, "topK": 20, "maxTemplates": 8, "importDb": True,
     })
-    deadline = time.monotonic() + int(os.getenv("E2E_TIMEOUT_SECONDS", "300"))
+    deadline = started + int(os.getenv("E2E_TIMEOUT_SECONDS", "300"))
     while time.monotonic() < deadline:
         status = api("GET", f"/api/allocation-tasks/{task_id}/templates/generation-status")
         if status["status"] in TERMINAL:
             if status["status"] != "SUCCESS":
                 raise AssertionError(json.dumps(status, ensure_ascii=False))
-            return status
+            return {**status, "jobSeconds": round(time.monotonic() - started, 3)}
         time.sleep(1)
     raise TimeoutError("V3.5 generation did not reach a terminal state")
 
@@ -344,7 +346,7 @@ def main() -> None:
         "apiBaseUrl": API_BASE,
         "database": f"{DB_HOST}:{DB_PORT}/{DB_NAME}",
         "fixture": fixture,
-        "generation": {"status": generation["status"]},
+        "generation": {"status": generation["status"], "jobSeconds": generation.get("jobSeconds")},
         "schemeId": scheme["id"],
         "runId": rows["runId"],
         "rows": rows,

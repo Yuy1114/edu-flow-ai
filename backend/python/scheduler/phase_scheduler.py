@@ -19,7 +19,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from scheduler.paths import OUTPUT_DIR, SINGLE_PLACEMENT_MODEL_DIR
 from scheduler.pattern_builder import DEFAULT_OUTPUT_PATH as DEFAULT_PATTERNS_PATH
@@ -1416,6 +1416,111 @@ def place_dynamic(
                 "proven_infeasible": False,
             })
     return unplaced, week_assignment
+
+
+def audit_placement_constraints(
+    fragments: Sequence[Mapping[str, Any]],
+    *,
+    room_capacity_by_name: Mapping[str, int] | None = None,
+    room_type_by_name: Mapping[str, str] | None = None,
+    total_weeks: int | None = None,
+    automatic_periods: frozenset[int] | None = None,
+    all_periods: frozenset[int] = ALL_DAY_PERIODS,
+    max_weekdays: int = 7,
+) -> dict[str, Any]:
+    """对**任意已排课表**可复算的硬约束审计：教师/班级/教室占用、房型、容量、课时、时间轴。
+
+    这些约束在生成期是"顺手拦下"的（先到先得，放不下就换格子），对一份已经排好的课表
+    没有一遍扫描的办法。冲突注入实验要证明"已知冲突一定被检出"，就必须有一个独立于生成
+    过程的检查器；这里把它做成纯函数，输入是片段序列（引擎内片段或 cover 片段都行，
+    字段名见 `fragments_from_cover`）。
+
+    返回的是**违规条目**：每类给条数与样例，`total` 是各类之和。合法课表应当全为 0。
+    """
+    occupancy: dict[str, Counter] = {"teacher": Counter(), "class": Counter(), "room": Counter()}
+    room_type_mismatches: list[dict[str, Any]] = []
+    capacity_mismatches: list[dict[str, Any]] = []
+    time_axis_violations: list[dict[str, Any]] = []
+    outside_automatic: list[dict[str, Any]] = []
+
+    for fragment in fragments:
+        weeks = [int(week) for week in (fragment.get("week_mask") or fragment.get("template_week_mask") or ())]
+        day = int(fragment.get("day") or 0)
+        start = int(fragment.get("start") or 0)
+        consecutive = int(fragment.get("consecutive") or 0)
+        uid = str(fragment.get("uid") or fragment.get("fragment_id") or "")
+        room = str(fragment.get("room") or "")
+
+        issue: dict[str, Any] | None = None
+        if consecutive < 1:
+            issue = {"reason": "consecutive_not_positive", "consecutive": consecutive}
+        elif start < 1:
+            issue = {"reason": "period_below_axis", "start": start}
+        elif start + consecutive - 1 > max(all_periods):
+            issue = {"reason": "period_above_axis", "start": start, "consecutive": consecutive}
+        elif day < 1 or day > max_weekdays:
+            issue = {"reason": "weekday_out_of_range", "day": day}
+        elif not weeks:
+            issue = {"reason": "empty_week_mask"}
+        elif len(set(weeks)) != len(weeks):
+            issue = {"reason": "duplicate_weeks"}
+        elif total_weeks is not None and (min(weeks) < 1 or max(weeks) > total_weeks):
+            issue = {"reason": "week_out_of_semester", "weeks": weeks}
+        if issue is not None:
+            time_axis_violations.append({"uid": uid, **issue})
+
+        required_type = str(fragment.get("required_room_type") or "").strip()
+        if room_type_by_name is not None and room and required_type:
+            actual_type = room_type_by_name.get(room)
+            # 认不出的教室（注入实验里的虚拟教室、或教室池外的房间）不做房型判定。
+            if actual_type is not None and actual_type != required_type:
+                room_type_mismatches.append({"uid": uid, "room": room,
+                                             "required_room_type": required_type, "actual_room_type": actual_type})
+
+        student_count = int(fragment.get("student_count") or 0)
+        if room_capacity_by_name is not None and room and student_count:
+            capacity = int(room_capacity_by_name.get(room) or 0)
+            if capacity and student_count > capacity:
+                capacity_mismatches.append({"uid": uid, "room": room,
+                                            "student_count": student_count, "capacity": capacity})
+
+        if automatic_periods is not None and start >= 1 and consecutive >= 1:
+            if any(period not in automatic_periods for period in range(start, start + consecutive)):
+                outside_automatic.append({"uid": uid, "start": start, "consecutive": consecutive})
+
+        for week in weeks:
+            for offset in range(max(0, consecutive)):
+                coordinate = (week, day, start + offset)
+                for teacher in fragment.get("teacher_keys") or ():
+                    occupancy["teacher"][(str(teacher), *coordinate)] += 1
+                for class_key in fragment.get("class_keys") or ():
+                    occupancy["class"][(str(class_key), *coordinate)] += 1
+                if room:
+                    occupancy["room"][(room, *coordinate)] += 1
+
+    counts = {name: sum(value - 1 for value in counter.values() if value > 1)
+              for name, counter in occupancy.items()}
+    duplicated = {name: [key for key, value in counter.items() if value > 1][:10]
+                  for name, counter in occupancy.items()}
+    total = (sum(counts.values()) + len(room_type_mismatches) + len(capacity_mismatches)
+             + len(time_axis_violations) + len(outside_automatic))
+    return {
+        "teacher": counts["teacher"],
+        "class": counts["class"],
+        "room": counts["room"],
+        "room_type_mismatch": len(room_type_mismatches),
+        "capacity_mismatch": len(capacity_mismatches),
+        "time_axis_violation": len(time_axis_violations),
+        "outside_automatic_domain": len(outside_automatic),
+        "total": total,
+        "duplicated_coordinates": duplicated,
+        "preview": {
+            "room_type_mismatch": room_type_mismatches[:5],
+            "capacity_mismatch": capacity_mismatches[:5],
+            "time_axis_violation": time_axis_violations[:5],
+            "outside_automatic_domain": outside_automatic[:5],
+        },
+    }
 
 
 def audit_dynamic_schedule(schedule: DynamicSemesterSchedule) -> dict[str, int]:
