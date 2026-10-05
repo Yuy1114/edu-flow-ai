@@ -18,5 +18,4 @@ _test/
 .DS_Store
 **/.env
 !.env.example
-!.env.example
-backend/.env.example
+!backend/.env.example
