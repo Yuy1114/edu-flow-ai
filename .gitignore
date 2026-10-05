@@ -20,6 +20,3 @@ _test/
 !.env.example
 !.env.example
 backend/.env.example
-
-docs/archive
-docs/feedback
