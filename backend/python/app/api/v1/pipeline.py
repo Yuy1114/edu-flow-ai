@@ -62,6 +62,9 @@ class PipelineJobRequest(BaseModel):
     importDb: bool = True
     truncateDb: bool = False
     timeoutSeconds: int = Field(default=DEFAULT_TIMEOUT_SECONDS, ge=30, le=7200)
+    # 教师画像的最终口径（final_profile：避早课、避晚课、紧凑、偏好星期/节次、日课时上限、
+    # 偏好房型），键是教师 ID 或姓名。缺省 = 本次不使用画像，候选顺序与接入前逐位相同。
+    teacherProfiles: dict[str, Any] | None = None
 
 
 class PipelineJobStatus(BaseModel):
@@ -245,8 +248,12 @@ def _validate_formal_request(request: PipelineJobRequest) -> None:
         raise HTTPException(status_code=422, detail="Phase 1 formal scheduling is rules-only; trainModel must be false")
 
 
-def _pipeline_command(request: PipelineJobRequest) -> list[str]:
-    return [
+def _pipeline_command(
+    request: PipelineJobRequest,
+    *,
+    teacher_profiles_path: Path | None = None,
+) -> list[str]:
+    command = [
         sys.executable,
         "-m",
         "scheduler.run_pipeline",
@@ -260,6 +267,9 @@ def _pipeline_command(request: PipelineJobRequest) -> list[str]:
         str(request.maxTemplates),
         "--import-db",
     ]
+    if teacher_profiles_path is not None:
+        command.extend(["--teacher-profiles", str(teacher_profiles_path)])
+    return command
 
 
 def _execute_job(job_id: str, request: PipelineJobRequest, log_path: Path) -> None:
@@ -272,11 +282,18 @@ def _execute_job(job_id: str, request: PipelineJobRequest, log_path: Path) -> No
         error_message=None,
     )
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # 画像随作业落盘（与日志同级），既传给子进程也是可复现的证据。
+    teacher_profiles_path: Path | None = None
+    if request.teacherProfiles:
+        teacher_profiles_path = log_path.with_suffix(".teacher_profiles.json")
+        teacher_profiles_path.write_text(
+            json.dumps(request.teacherProfiles, ensure_ascii=False), encoding="utf-8",
+        )
     process: subprocess.Popen[str] | None = None
     try:
         with log_path.open("w", encoding="utf-8") as output:
             process = subprocess.Popen(
-                _pipeline_command(request),
+                _pipeline_command(request, teacher_profiles_path=teacher_profiles_path),
                 cwd=PIPELINE_ROOT,
                 stdout=output,
                 stderr=subprocess.STDOUT,

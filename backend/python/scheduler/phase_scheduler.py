@@ -23,6 +23,12 @@ from typing import Any
 
 from scheduler.paths import OUTPUT_DIR, SINGLE_PLACEMENT_MODEL_DIR
 from scheduler.pattern_builder import DEFAULT_OUTPUT_PATH as DEFAULT_PATTERNS_PATH
+from scheduler.teacher_preferences import (
+    PreferenceRanker,
+    build_index,
+    has_preference,
+    satisfaction_report,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -735,9 +741,16 @@ class DynamicSemesterSchedule:
         self._fragments_by_uid: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._teacher_day_uid_counts: dict[tuple[str, int, int], Counter] = defaultdict(Counter)
         self._teacher_day_load_week_bits: dict[tuple[str, int], dict[int, int]] = defaultdict(dict)
+        # 该教师某天已排的**课次数**（不是节数）：画像的日课时上限与 Java 评估侧都按次计，
+        # 而引擎自己的 TEACHER_DAY_CAP 按节计，两者口径分开记，不互相换算。
+        self._teacher_day_sessions: dict[tuple[str, int, int], int] = {}
 
     def day_load(self, teacher: str, week: int, day: int) -> int:
         return self.teacher_day.get((teacher, week, day), 0)
+
+    def day_sessions(self, teacher: str, week: int, day: int) -> int:
+        """该教师这一周这一天已经排了几次课（同一天的多次课各算一次）。"""
+        return self._teacher_day_sessions.get((teacher, week, day), 0)
 
     def _week_bits(self, weeks: tuple[int, ...]) -> int:
         cached = self._week_bits_cache.get(weeks)
@@ -963,6 +976,7 @@ class DynamicSemesterSchedule:
                 self.teacher_day[key] = new_load
                 self._update_teacher_day_load_bits(teacher, week, day, old_load, new_load)
                 self._teacher_day_uid_counts[key][pattern["uid"]] += consecutive
+                self._teacher_day_sessions[key] = self._teacher_day_sessions.get(key, 0) + 1
         return fragment
 
     def remove_fragment(self, fragment: dict[str, Any]) -> None:
@@ -1012,6 +1026,11 @@ class DynamicSemesterSchedule:
                         uid_counts.pop(fragment["uid"], None)
                     if not uid_counts:
                         self._teacher_day_uid_counts.pop(key, None)
+                remaining_sessions = self._teacher_day_sessions.get(key, 0) - 1
+                if remaining_sessions > 0:
+                    self._teacher_day_sessions[key] = remaining_sessions
+                else:
+                    self._teacher_day_sessions.pop(key, None)
 
     def task_fragments(self, uid: str) -> list[dict[str, Any]]:
         return list(self._fragments_by_uid.get(uid, ()))
@@ -1085,12 +1104,16 @@ def place_dynamic(
     allowed_periods: list[int],
     room_capacity_by_name: dict[str, int] | None = None,
     room_name_by_id: dict[str, str] | None = None,
+    teacher_preferences: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, tuple[int, ...]]]:
     """Place tasks on absolute weeks; every fragment of one task shares one week mask."""
     unplaced: list[dict[str, Any]] = []
     week_assignment: dict[str, tuple[int, ...]] = {}
     room_name_by_id = room_name_by_id or {}
     room_names = {name for names in rooms_by_type.values() for name in names}
+    # 画像排序器：只有被画像覆盖的教师才改变候选顺序，其余任务走下面的确定性贪心。
+    room_type_of = {name: room_type for room_type, names in rooms_by_type.items() for name in names}
+    ranker = PreferenceRanker(build_index(teacher_preferences), room_type_of)
     patterns_by_uid = {pattern["uid"]: pattern for pattern in patterns}
     known_uids = set(patterns_by_uid)
     raw_room_pool_cache: dict[str, list[str]] = {}
@@ -1182,6 +1205,32 @@ def place_dynamic(
                 )
             ):
                 return day, start, room, rank, float(candidate_value(candidate, "score", 0.0) or 0.0)
+
+        teacher_keys = schedule._pattern_facts(pattern)[0]
+        if ranker.has(teacher_keys):
+            # 画像覆盖的教师：按软偏好排序试候选，房型偏好只调池内顺序。
+            # 可行性判定与下面那条分支完全相同，画像改变的是"先试哪个"。
+            profiled_pool = ranker.room_pool_for(teacher_keys, pool)
+            for rank, (day, start, score) in enumerate(
+                ranker.order_for(
+                    teacher_keys=teacher_keys,
+                    allowed_days=allowed_days,
+                    starts=starts,
+                    consecutive=consecutive,
+                    weeks=weeks,
+                    day_load=schedule.day_load,
+                    day_sessions=schedule.day_sessions,
+                    used_days=used_days,
+                ),
+                start=1,
+            ):
+                if (day, start) in used_slots:
+                    continue
+                if not schedule.base_free(pattern, weeks, day, start):
+                    continue
+                room = schedule.first_free_room(weeks, day, start, consecutive, profiled_pool)
+                if room is not None:
+                    return day, start, room, rank, score
 
         for day in sorted(allowed_days, key=lambda value: (used_days[value], value)):
             for start in starts:
@@ -1549,6 +1598,7 @@ def build_phase_cover(
     allowed_periods: frozenset[int] | None = None,
     rooms_path: Path | None = None,
     use_model: bool = True,
+    teacher_preferences: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     allowed_days = sorted(allowed_weekdays or DEFAULT_ALLOWED_WEEKDAYS)
     periods = sorted(allowed_periods or DEFAULT_ALLOWED_PERIODS)
@@ -1584,6 +1634,7 @@ def build_phase_cover(
         allowed_days=allowed_days, allowed_periods=periods,
         room_capacity_by_name=room_capacity_by_name,
         room_name_by_id=room_name_by_id,
+        teacher_preferences=teacher_preferences,
     )
 
     conservation = final_hour_audit(patterns, schedule)
@@ -1626,6 +1677,26 @@ def build_phase_cover(
     model_hits = sum(1 for f in schedule.fragments if f["candidate_rank"] > 0)
     total_frags = len(schedule.fragments)
     output_fragment_count = sum(len(template["fragments"]) for template in template_docs)
+    # 生成侧的画像读数：与 Java 的「方案满意度」同名分量，用于接入前后对比。
+    profile_index = build_index(teacher_preferences)
+    room_type_of = {name: room_type for room_type, names in rooms_by_type.items() for name in names}
+    covered_fragments = [
+        fragment for fragment in schedule.fragments
+        if has_preference(profile_index, fragment.get("teacher_keys") or ())
+    ]
+    profile_satisfaction = satisfaction_report(
+        index=profile_index,
+        fragments=schedule.fragments,
+        room_type_of=room_type_of,
+    )
+    profile_satisfaction["covered_teacher_count"] = len({
+        key for fragment in covered_fragments for key in fragment.get("teacher_keys") or ()
+        if key in profile_index
+    })
+    profile_satisfaction["covered_fragment_count"] = len(covered_fragments)
+    profile_satisfaction["ranked_fragment_count"] = sum(
+        1 for fragment in covered_fragments if int(fragment.get("candidate_rank") or 0) > 0
+    )
     report = {
         "cover_id": "dynamic_cover_v2",
         "phase_weeks": [total_weeks],
@@ -1654,6 +1725,7 @@ def build_phase_cover(
         "model_hit_fragments": model_hits,
         "model_hit_rate": round(model_hits / max(1, total_frags), 4),
         "model_fallback_error": model_error,
+        "profile_satisfaction": profile_satisfaction,
         "conflicts": audits,
         "conservation_ok": conservation["ok"],
         "conservation_unplaced_skipped": 0,

@@ -3,7 +3,7 @@
 > 更新时间：2026-10-05
 > 原则：项目文档统一维护在本仓库 `docs/` 下。索引只列真实存在的文件。
 
-> **当前实现口径**：根目录 `CONTEXT.md`（领域语言）、`docs/adr/0001~0003`（关键决策）、
+> **当前实现口径**：根目录 `CONTEXT.md`（领域语言）、`docs/adr/0001~0004`（关键决策）、
 > `architecture/19`（产品架构，已按 V3.5 重写）、`architecture/22`（排课实现）。
 > `docs/archive/` 是历史方案，`docs/thesis/` 仍是旧口径、待重写。
 
@@ -45,6 +45,7 @@ Python 侧代码布局见 `backend/python/README.md`（scheduler = 排课引擎�
 | `adr/0001-unify-timetable-on-atomic-periods.md` | 统一 11 个 45 分钟原子小节（含 2026-09-06 晚间三节修订） | ✅ 当前 |
 | `adr/0002-derive-dynamic-templates-from-active-weeks.md` | 按活跃教学任务集合派生动态周模板 | ✅ 当前 |
 | `adr/0003-preflight-nested-room-capacity.md` | 排课前执行教室分层必要容量预检 | ✅ 当前 |
+| `adr/0004-rank-candidates-with-teacher-profiles.md` | 教师画像只排序候选，不改变可行域 | ✅ 当前 |
 
 ### 架构设计
 
@@ -64,6 +65,7 @@ Python 侧代码布局见 `backend/python/README.md`（scheduler = 排课引擎�
 | `implementation/11-多角色课表导出.md` | 教师/班级/教室/教务四视角 .xlsx 导出 | ✅ 当前（2026-09-06） |
 | `implementation/12-导入闭环与批次台账.md` | 解析、冲突策略、五类结果、批次台账、不可训练标记 | ✅ 当前（2026-09-06） |
 | `implementation/13-训练语料清洗与质检台.md` | ★ 五学期 2,415 份课表：晚间解析修复、可训练范围标注、合班教学任务重建、质检台与快照表 | ✅ 当前（2026-10-05） |
+| `implementation/14-教师画像候选排序接入.md` | ★ 画像回到排课引擎：候选打分七维度、硬约束与课时守恒守卫、真实 pattern 上的接入前后差值 | ✅ 当前（2026-10-05，真机复跑待做） |
 | `implementation/07-*.sql`、`08-*.sql` | 历史迁移片段；正式迁移在 `backend/db/` | 📦 参考 |
 
 ### 路线图与待办

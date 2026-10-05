@@ -2,6 +2,7 @@ package com.yuy.eduflow.allocation;
 
 import com.yuy.eduflow.common.exception.ValidationException;
 import com.yuy.eduflow.ml.MlApiProperties;
+import com.yuy.eduflow.ml.TeacherProfileDocumentService;
 import com.yuy.eduflow.timeslot.SchedulingTimePolicy;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -34,10 +35,12 @@ public class V35TemplateGenerationService {
 	);
 
 	private final RestClient restClient;
+	private final TeacherProfileDocumentService profileDocumentService;
 
 	public V35TemplateGenerationService(
 		MlApiProperties properties,
-		RestClient.Builder restClientBuilder
+		RestClient.Builder restClientBuilder,
+		TeacherProfileDocumentService profileDocumentService
 	) {
 		SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
 		requestFactory.setConnectTimeout(Duration.ofSeconds(5));
@@ -46,6 +49,7 @@ public class V35TemplateGenerationService {
 			.requestFactory(requestFactory)
 			.baseUrl(properties.getUrl())
 			.build();
+		this.profileDocumentService = profileDocumentService;
 	}
 
 	public V35TemplateGenerationStatus getStatus(Long allocationTaskId) {
@@ -89,6 +93,13 @@ public class V35TemplateGenerationService {
 		// the legacy importDb flag.
 		request.put("importDb", true);
 		request.put("truncateDb", false);
+		// 教师画像只排序候选、不改可行域：带上它这次排课就会优先照顾教师偏好；
+		// 没有任何教师带偏好的任务不会进 payload，引擎行为与接入前逐位相同。
+		Map<String, Map<String, Object>> teacherProfiles =
+			profileDocumentService.finalProfilesForAllocationTask(allocationTaskId);
+		if (!teacherProfiles.isEmpty()) {
+			request.put("teacherProfiles", teacherProfiles);
+		}
 
 		try {
 			V35TemplateGenerationStatus status = restClient.post()

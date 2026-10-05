@@ -86,6 +86,7 @@ def run_pipeline(
     import_db: bool = False,
     truncate_db: bool = False,
     snapshot: bool = True,
+    teacher_profiles: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     # Include both microseconds and a random suffix.  Fast retries can start in the
@@ -97,6 +98,12 @@ def run_pipeline(
     generation_run_id = f"v35-{allocation_task_id}-{run_timestamp.replace('_', '')}-{run_token}"
     run_dir = PIPELINE_RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # 画像随作业一起落盘：排课结果的可复现证据，而不是只留在调用方的内存里。
+    if teacher_profiles:
+        (run_dir / "teacher_profiles.json").write_text(
+            json.dumps(teacher_profiles, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
 
     steps: list[dict[str, Any]] = []
     clean_report: dict[str, Any] = {"skipped": True, "reason": "not training, skipping clean"}
@@ -172,6 +179,7 @@ def run_pipeline(
         allowed_periods=allowed_periods,
         rooms_path=active_rooms_path,
         use_model=train_model,
+        teacher_preferences=teacher_profiles,
     ))
 
     # --- Export DB draft ---
@@ -288,6 +296,7 @@ def run_pipeline(
             "model_rounds": model_rounds,
             "import_db": import_db,
             "truncate_db": truncate_db,
+            "teacher_profile_count": len(teacher_profiles or {}),
         },
         "status": publication_gate["status"],
         "publication_gate": publication_gate,
@@ -327,6 +336,7 @@ def run_pipeline(
                 "overall_scheduled_hours": overall_hour_audit["overall_scheduled_hours"],
                 "overall_delta_hours": overall_hour_audit["overall_delta_hours"],
                 "overall_under_task_count": overall_hour_audit["overall_under_task_count"],
+                "profile_satisfaction": cover_report.get("profile_satisfaction"),
             },
             "db_draft": {
                 "counts": export_report.get("counts", {}),
@@ -553,6 +563,8 @@ def main() -> None:
     parser.add_argument("--model-rounds", type=int, default=160)
     parser.add_argument("--import-db", action="store_true")
     parser.add_argument("--truncate-db", action="store_true")
+    parser.add_argument("--teacher-profiles", default=None,
+                        help="教师画像软偏好 JSON 文件，{教师ID或姓名: final_profile}")
     args = parser.parse_args()
     if args.truncate_db and not args.import_db:
         raise SystemExit("--truncate-db requires --import-db")
@@ -571,6 +583,10 @@ def main() -> None:
         model_rounds=args.model_rounds,
         import_db=args.import_db,
         truncate_db=args.truncate_db,
+        teacher_profiles=(
+            json.loads(Path(args.teacher_profiles).read_text(encoding="utf-8"))
+            if args.teacher_profiles else None
+        ),
     )
     print(json.dumps({
         "status": summary["status"],
