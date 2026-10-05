@@ -2,6 +2,7 @@ package com.yuy.eduflow.allocation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -19,6 +20,7 @@ import com.yuy.eduflow.teachingtask.TeachingTask;
 import com.yuy.eduflow.teachingtask.TeachingTaskMapper;
 import com.yuy.eduflow.timeslot.TimeSlotService;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -263,6 +265,11 @@ class AllocationTemplateDraftServiceViewTest {
 		assertEquals("preferred_weekday", view.lowSatisfactionTeachers().get(0).primaryReasonDimension());
 		assertEquals(0.0, view.lowSatisfactionTeachers().get(0).primaryReasonScore());
 		assertEquals("张老师", view.lowSatisfactionTeachers().get(0).teacherName());
+		// evidence 里的 null（未声明的维度计数）要原样带出来，而不是抛 NPE 或悄悄丢掉。
+		Map<String, Object> evidence = view.lowSatisfactionTeachers().get(0).evidence();
+		assertTrue(evidence.containsKey("preferred_room_type_hits"));
+		assertNull(evidence.get("preferred_room_type_hits"));
+		assertEquals(0, evidence.get("preferred_weekday_hits"));
 		assertEquals(0.7, view.averagePreferenceScore(), 0.0001);
 	}
 
@@ -301,7 +308,8 @@ class AllocationTemplateDraftServiceViewTest {
 		row.setLowSatisfaction(lowSatisfaction);
 		row.setDeclaredDimensionsJson(declaredDimensionsJson);
 		row.setComponentsJson(componentsJson);
-		row.setEvidenceJson("{\"preferred_weekday_hits\":0}");
+		// 与真实落库一致：没声明过房型时该计数是 null（真机就是这么把页面打成 500 的）。
+		row.setEvidenceJson("{\"preferred_weekday_hits\":0,\"preferred_room_type_hits\":null}");
 		return row;
 	}
 

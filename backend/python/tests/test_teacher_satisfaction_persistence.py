@@ -16,6 +16,7 @@ from scheduler.export_template_cover_db_draft import export_db_draft
 from scheduler.import_db_draft_to_mysql import TABLE_FILES, import_draft
 from scheduler.pattern_builder import build_patterns
 from scheduler.phase_scheduler import build_phase_cover
+from scheduler.teacher_preferences import build_index, satisfaction_report, template_satisfaction_rows
 from scheduler.validate_db_draft_export import validate_export
 
 SATISFACTION_TABLE = "schedule_teacher_satisfaction"
@@ -236,6 +237,50 @@ class SatisfactionValidationTest(unittest.TestCase):
             self.assertEqual(issue_counts.get("duplicate_teacher_satisfaction"), 2)
             self.assertEqual(issue_counts.get("score_out_of_range"), 1)
             self.assertEqual(issue_counts.get("non_positive_item_count"), 1)
+
+
+class SatisfactionNamingTest(unittest.TestCase):
+    """片段只带一个 teacher_name（主讲）：助教不能被贴上主讲的名字。"""
+
+    def _fragment(self) -> dict:
+        return {
+            "fragment_id": "f1", "primary_teacher_id": 11, "assistant_teacher_id": 12,
+            "teacher_name": "主讲老师", "day_of_week": 1, "period_index": 3,
+            "consecutive_slots": 2, "classroom_name": "A101", "week_mask": [1],
+        }
+
+    def test_only_the_teacher_a_fragment_names_gets_that_name(self) -> None:
+        index = build_index({"11": {"preferred_weekdays": [1]}, "12": {"preferred_weekdays": [1]}})
+        report = satisfaction_report(index=index, fragments=[self._fragment()])
+
+        self.assertEqual(
+            {teacher["teacher_key"]: teacher["teacher_name"] for teacher in report["teachers"]},
+            {"id:11": "主讲老师", "id:12": None},
+        )
+
+    def test_the_export_fills_the_assistant_name_from_task_metadata(self) -> None:
+        index = build_index({"11": {"preferred_weekdays": [1]}, "12": {"preferred_weekdays": [1]}})
+        report = satisfaction_report(index=index, fragments=[self._fragment()])
+
+        rows = template_satisfaction_rows(
+            {"dynamic_template_01": report},
+            allocation_task_id=1,
+            generation_run_id="run-1",
+            teacher_names_by_id={12: "助教老师"},
+        )
+
+        self.assertEqual(
+            {row["teacher_key"]: row["teacher_name"] for row in rows},
+            {"id:11": "主讲老师", "id:12": "助教老师"},
+        )
+        # 没有元数据时退回 key，也不能把主讲的名字安到助教头上。
+        fallback = template_satisfaction_rows(
+            {"dynamic_template_01": report}, allocation_task_id=1, generation_run_id="run-1",
+        )
+        self.assertEqual(
+            {row["teacher_key"]: row["teacher_name"] for row in fallback},
+            {"id:11": "主讲老师", "id:12": "id:12"},
+        )
 
 
 if __name__ == "__main__":

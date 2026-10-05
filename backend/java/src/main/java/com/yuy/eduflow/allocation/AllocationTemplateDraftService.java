@@ -191,8 +191,9 @@ public class AllocationTemplateDraftService {
 			reasonDimension,
 			reasonDimension == null ? null : components.get(reasonDimension),
 			components,
-			readJsonMap(row.getEvidenceJson()).entrySet().stream()
-				.collect(Collectors.toMap(Map.Entry::getKey, entry -> (Object) entry.getValue(), (a, b) -> a, LinkedHashMap::new))
+			// evidence 里本来就有 null（例如没声明过房型时 preferred_room_type_hits 为 null），
+			// 用 Collectors.toMap 会因 null 值直接 NPE 把整页打成 500，所以手工装配。
+			readJsonRawMap(row.getEvidenceJson())
 		);
 	}
 
@@ -220,6 +221,22 @@ public class AllocationTemplateDraftService {
 				String.valueOf(key),
 				value instanceof Number number ? number.doubleValue() : null
 			));
+			return values;
+		} catch (RuntimeException ex) {
+			log.warn("满足度列不是可读 JSON，按空处理：{}", json);
+			return Map.of();
+		}
+	}
+
+	/** 原样保留 null 的对象映射：evidence 里的 null 表示"该维度没声明"，不是解析失败。 */
+	private Map<String, Object> readJsonRawMap(String json) {
+		if (!StringUtils.hasText(json)) {
+			return Map.of();
+		}
+		try {
+			Map<?, ?> parsed = objectMapper.readValue(json, Map.class);
+			Map<String, Object> values = new LinkedHashMap<>();
+			parsed.forEach((key, value) -> values.put(String.valueOf(key), value));
 			return values;
 		} catch (RuntimeException ex) {
 			log.warn("满足度列不是可读 JSON，按空处理：{}", json);

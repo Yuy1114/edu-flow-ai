@@ -231,6 +231,7 @@ def export_db_draft(
         profile_satisfaction_templates or {},
         allocation_task_id=allocation_task_id,
         generation_run_id=generation_run_id,
+        teacher_names_by_id=_teacher_names_by_id(task_metadata),
     )
     if satisfaction_rows:
         files["schedule_teacher_satisfaction"] = output_dir / "schedule_teacher_satisfaction.jsonl"
@@ -458,6 +459,24 @@ def _load_task_metadata(path: Path | None) -> dict[str, dict[Any, dict[str, Any]
         if task_id is not None:
             by_id[task_id] = row
     return {"by_source": by_source, "by_id": by_id}
+
+
+def _teacher_names_by_id(metadata: dict[str, dict[Any, dict[str, Any]]]) -> dict[int, str]:
+    """任务元数据里的 教师 ID → 姓名。
+
+    满足度行的姓名不能只靠片段：片段只有一个 ``teacher_name``（主讲），助教只能在这里补。
+    """
+    names: dict[int, str] = {}
+    for row in list(metadata["by_id"].values()) + list(metadata["by_source"].values()):
+        for id_key, name_key in (
+            ("primary_teacher_id", "primary_teacher_name"),
+            ("assistant_teacher_id", "assistant_teacher_name"),
+        ):
+            teacher_id = _optional_int(row.get(id_key))
+            name = str(row.get(name_key) or "").strip()
+            if teacher_id is not None and name:
+                names.setdefault(teacher_id, name)
+    return names
 
 
 def _load_room_ids(path: Path | None) -> dict[str, int]:

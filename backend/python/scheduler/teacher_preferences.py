@@ -62,6 +62,15 @@ KNOWN_KEYS = (
 )
 
 
+def _optional_int(value: Any) -> int | None:
+    """宽容取整：拿不到数字就是 None，不把脏值当 0。"""
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number or None
+
+
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -143,7 +152,7 @@ def teacher_keys_of(fragment: Mapping[str, Any]) -> list[str]:
 
 
 def as_item(fragment: Mapping[str, Any]) -> dict[str, Any]:
-    """把片段统一成评估项口径。
+    """把排课引擎的片段或 cover 片段统一成评估项。
 
     排课引擎的片段用 ``day`` / ``start`` / ``consecutive`` / ``room``，cover 片段用
     ``day_of_week`` / ``period_index`` / ``consecutive_slots`` / ``classroom_name``，
@@ -157,6 +166,7 @@ def as_item(fragment: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "teacher_keys": list(fragment.get("teacher_keys") or teacher_keys_of(fragment)),
         "teacher_name": fragment.get("teacher_name"),
+        "primary_teacher_id": _optional_int(fragment.get("primary_teacher_id")),
         "uid": fragment.get("uid") or fragment.get("fragment_id") or fragment.get("source_key"),
         "day": int(fragment.get("day_of_week") or fragment.get("day") or 0),
         "start": int(fragment.get("period_index") or fragment.get("start") or 0),
@@ -331,12 +341,15 @@ def satisfaction_report(
     names: dict[str, str] = {}
     for fragment in fragments:
         item = as_item(fragment)
+        name = item.get("teacher_name")
         for key in item["teacher_keys"]:
             if key not in index:
                 continue
             by_teacher.setdefault(key, []).append(item)
-            if item.get("teacher_name") and key not in names:
-                names[key] = str(item["teacher_name"])
+            # 片段的 teacher_name 只是"主讲那一位"的名字：只有它真的指向这个 key 时才贴名字，
+            # 否则多教师片段会把助教也标成主讲姓名（真机验收里就是这么错的）。
+            if name and key in {f"name:{name}", f"id:{item.get('primary_teacher_id')}"}:
+                names.setdefault(key, str(name))
 
     reports: list[dict[str, Any]] = []
     for teacher_key, items in sorted(by_teacher.items()):
@@ -467,6 +480,7 @@ def template_satisfaction_rows(
     *,
     allocation_task_id: int | None = None,
     generation_run_id: str | None = None,
+    teacher_names_by_id: Mapping[int, str] | None = None,
 ) -> list[dict[str, Any]]:
     """把"每个动态模板的满足度报告"摊平成落库行。
 
@@ -475,14 +489,23 @@ def template_satisfaction_rows(
     片段如果只有姓名，就存姓名，不去猜 ID。
     """
     rows: list[dict[str, Any]] = []
+    names_by_id = dict(teacher_names_by_id or {})
     for template_code, report in reports_by_template.items():
         for teacher in report.get("teachers") or []:
+            teacher_id = teacher.get("teacher_id")
+            # 姓名来源顺序：报告里确认过的名字 → 任务元数据里按 ID 查到的名字 → 退回 key
+            # （片段只带主讲姓名，助教的名字只能从元数据补，否则会把助教标成主讲）。
+            teacher_name = (
+                teacher.get("teacher_name")
+                or (names_by_id.get(int(teacher_id)) if teacher_id else None)
+                or teacher["teacher_key"]
+            )
             rows.append({
                 "allocation_task_id": allocation_task_id,
                 "generation_run_id": generation_run_id,
                 "template_code": str(template_code),
-                "teacher_id": teacher.get("teacher_id"),
-                "teacher_name": teacher.get("teacher_name") or teacher["teacher_key"],
+                "teacher_id": teacher_id,
+                "teacher_name": teacher_name,
                 "teacher_key": teacher["teacher_key"],
                 "item_count": teacher["item_count"],
                 "days_used": teacher["days_used"],
