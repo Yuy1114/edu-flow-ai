@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from scheduler.phase_scheduler import DEFAULT_OUTPUT_PATH as DEFAULT_COVER_PATH
+from scheduler.teacher_preferences import template_satisfaction_rows
 
 DEFAULT_OUTPUT_DIR = DEFAULT_COVER_PATH.parent / "db_draft"
 DEFAULT_REPORT_PATH = DEFAULT_OUTPUT_DIR / "export_report.json"
@@ -30,6 +31,7 @@ def export_db_draft(
     generation_run_id: str | None = None,
     task_source_path: Path | None = None,
     rooms_path: Path | None = None,
+    profile_satisfaction_templates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cover = json.loads(cover_path.read_text(encoding="utf-8"))
     templates = cover.get("templates", [])
@@ -223,6 +225,19 @@ def export_db_draft(
         "schedule_template_fragment_teachers": output_dir / "schedule_template_fragment_teachers.jsonl",
         "schedule_template_fragment_class_groups": output_dir / "schedule_template_fragment_class_groups.jsonl",
     }
+    # 逐教师的画像满足度按模板落库：方案详情页要能直接读到"这个方案里谁不满意、为什么"，
+    # 而不是每次打开页面都重算一遍（重算需要画像文件和整份 cover）。
+    satisfaction_rows = template_satisfaction_rows(
+        profile_satisfaction_templates or {},
+        allocation_task_id=allocation_task_id,
+        generation_run_id=generation_run_id,
+    )
+    if satisfaction_rows:
+        files["schedule_teacher_satisfaction"] = output_dir / "schedule_teacher_satisfaction.jsonl"
+    else:
+        # 契约：一张表一个文件，即使没有画像也要有（空的），
+        # 否则导入端会因为缺文件而无法保持"文件 ↔ 表"的对照。
+        files["schedule_teacher_satisfaction"] = output_dir / "schedule_teacher_satisfaction.jsonl"
     _write_jsonl(files["schedule_templates"], template_rows)
     _write_jsonl(files["schedule_template_weeks"], week_rows)
     _write_jsonl(files["schedule_template_fragments"], fragment_rows)
@@ -230,6 +245,7 @@ def export_db_draft(
     _write_jsonl(files["schedule_template_fragment_slots"], slot_rows)
     _write_jsonl(files["schedule_template_fragment_teachers"], fragment_teacher_rows)
     _write_jsonl(files["schedule_template_fragment_class_groups"], fragment_class_group_rows)
+    _write_jsonl(files["schedule_teacher_satisfaction"], satisfaction_rows)
 
     report = {
         "allocation_task_id": allocation_task_id,
@@ -246,6 +262,7 @@ def export_db_draft(
             "template_fragment_slots": len(slot_rows),
             "template_fragment_teachers": len(fragment_teacher_rows),
             "template_fragment_class_groups": len(fragment_class_group_rows),
+            "teacher_satisfaction": len(satisfaction_rows),
         },
         "identity_resolution": {
             "required": task_source_path is not None or rooms_path is not None,

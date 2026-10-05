@@ -31,6 +31,7 @@ TABLE_FILES = {
     "schedule_template_fragment_slot": "schedule_template_fragment_slots.jsonl",
     "schedule_template_fragment_teacher": "schedule_template_fragment_teachers.jsonl",
     "schedule_template_fragment_class_group": "schedule_template_fragment_class_groups.jsonl",
+    "schedule_teacher_satisfaction": "schedule_teacher_satisfaction.jsonl",
 }
 
 INSERT_COLUMNS = {
@@ -62,6 +63,11 @@ INSERT_COLUMNS = {
     "schedule_template_fragment_class_group": [
         "template_fragment_id", "fragment_code", "template_id", "template_code", "allocation_task_id",
         "generation_run_id", "teaching_task_id", "class_group_id",
+    ],
+    "schedule_teacher_satisfaction": [
+        "allocation_task_id", "generation_run_id", "template_code", "teacher_key", "teacher_id",
+        "teacher_name", "item_count", "days_used", "satisfaction_score", "preference_score",
+        "low_satisfaction", "declared_dimensions_json", "components_json", "evidence_json",
     ],
 }
 
@@ -126,6 +132,8 @@ def import_draft(
             _insert_rows(cursor, "schedule_template_fragment_teacher", teacher_rows)
             _insert_rows(cursor, "schedule_template_fragment_class_group", class_group_rows)
             _insert_rows(cursor, "schedule_template_fragment_slot", slot_rows)
+            # 满足度按 template_code 挂钩，不经模板/片段 ID 映射。
+            _insert_rows(cursor, "schedule_teacher_satisfaction", rows_by_table["schedule_teacher_satisfaction"])
 
             persisted_counts = _persisted_counts(cursor, generation_run_id)
             expected_counts = {table: len(rows) for table, rows in rows_by_table.items()}
@@ -164,6 +172,7 @@ def _existing_tables(connection) -> set[str]:
 
 def _truncate_tables(cursor) -> None:
     for table in [
+        "schedule_teacher_satisfaction",
         "schedule_template_fragment_slot",
         "schedule_template_fragment_teacher",
         "schedule_template_fragment_class_group",

@@ -21,6 +21,7 @@ def validate_export(*, input_dir: Path = DEFAULT_OUTPUT_DIR, report_path: Path =
     slots = _read_jsonl(input_dir / "schedule_template_fragment_slots.jsonl")
     fragment_teachers = _read_jsonl_if_exists(input_dir / "schedule_template_fragment_teachers.jsonl")
     fragment_class_groups = _read_jsonl_if_exists(input_dir / "schedule_template_fragment_class_groups.jsonl")
+    satisfaction = _read_jsonl_if_exists(input_dir / "schedule_teacher_satisfaction.jsonl")
     export_report = _read_json_if_exists(input_dir / "export_report.json")
 
     issues: list[dict[str, Any]] = []
@@ -46,6 +47,10 @@ def validate_export(*, input_dir: Path = DEFAULT_OUTPUT_DIR, report_path: Path =
     issues.extend(_fragment_week_issues(fragment_weeks, weeks, fragment_ids))
     issues.extend(_relation_issues(fragment_teachers, "teacher_id", "fragment_teacher"))
     issues.extend(_relation_issues(fragment_class_groups, "class_group_id", "fragment_class_group"))
+    # 满足度行的唯一键是 (template_code, teacher_key)：这里放过去，导入端会因为
+    # UNIQUE 约束整批失败，所以在草案校验这关就拦住。
+    issues.extend(_missing_refs(satisfaction, "teacher_satisfaction", "template_code", template_codes))
+    issues.extend(_satisfaction_issues(satisfaction))
     identity_resolution = export_report.get("identity_resolution") or {}
     if identity_resolution.get("required"):
         issues.extend(identity_resolution.get("issues_preview") or [])
@@ -67,6 +72,7 @@ def validate_export(*, input_dir: Path = DEFAULT_OUTPUT_DIR, report_path: Path =
             "template_fragment_slots": len(slots),
             "template_fragment_teachers": len(fragment_teachers),
             "template_fragment_class_groups": len(fragment_class_groups),
+            "teacher_satisfaction": len(satisfaction),
         },
         "issue_count": len(issues),
         "issue_counts": dict(Counter(issue["issue"] for issue in issues).most_common()),
@@ -167,6 +173,27 @@ def _relation_issues(rows: list[dict[str, Any]], identity_field: str, row_type: 
         if key in seen:
             issues.append({"issue": "duplicate_fragment_relation", "row_type": row_type, "row_index": index, "value": key})
         seen.add(key)
+    return issues
+
+
+def _satisfaction_issues(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any]] = set()
+    for index, row in enumerate(rows, start=1):
+        key = (row.get("template_code"), row.get("teacher_key"))
+        if key in seen:
+            issues.append({"issue": "duplicate_teacher_satisfaction", "row_index": index, "value": list(key)})
+        seen.add(key)
+        if not str(row.get("teacher_name") or "").strip():
+            issues.append({"issue": "missing_teacher_name", "row_index": index})
+        for field in ("satisfaction_score", "preference_score"):
+            value = row.get(field)
+            if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+                issues.append({"issue": "score_out_of_range", "row_index": index, "field": field, "value": value})
+        if _safe_int(row.get("item_count")) <= 0:
+            issues.append({"issue": "non_positive_item_count", "row_index": index, "value": row.get("item_count")})
+        if _safe_int(row.get("low_satisfaction")) not in (0, 1):
+            issues.append({"issue": "invalid_low_satisfaction_flag", "row_index": index, "value": row.get("low_satisfaction")})
     return issues
 
 

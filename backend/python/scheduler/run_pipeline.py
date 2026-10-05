@@ -192,6 +192,7 @@ def run_pipeline(
         generation_run_id=generation_run_id,
         task_source_path=allocation_tasks_path,
         rooms_path=active_rooms_path,
+        profile_satisfaction_templates=cover_report.get("profile_satisfaction_templates"),
     ))
 
     # --- Validate DB draft ---

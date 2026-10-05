@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from typing import Any, Callable, Mapping, Sequence
 
 # 一处常量表：Phase 1 的正式链路不接受画像权重参数，调口径就是改这里，并且必须在
@@ -127,6 +128,42 @@ def build_index(payload: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 def has_preference(index: Mapping[str, dict[str, Any]], teacher_keys: Sequence[str]) -> bool:
     return any(key in index for key in teacher_keys)
+
+
+def teacher_keys_of(fragment: Mapping[str, Any]) -> list[str]:
+    """片段 → 教师 key。与引擎 ``_teacher_keys`` 同规则：有 ID 用 ``id:``，否则用 ``name:``。"""
+    ids: list[Any] = list(fragment.get("teacher_ids") or [])
+    ids.extend([fragment.get("primary_teacher_id"), fragment.get("assistant_teacher_id")])
+    keys = [f"id:{item}" for item in ids if item not in {None, "", 0, "0"}]
+    if not keys:
+        name = str(fragment.get("teacher_name") or "").strip()
+        if name:
+            keys.append(f"name:{name}")
+    return list(dict.fromkeys(keys))
+
+
+def as_item(fragment: Mapping[str, Any]) -> dict[str, Any]:
+    """把片段统一成评估项口径。
+
+    排课引擎的片段用 ``day`` / ``start`` / ``consecutive`` / ``room``，cover 片段用
+    ``day_of_week`` / ``period_index`` / ``consecutive_slots`` / ``classroom_name``，
+    两者在报告里必须能一起算，否则生成侧与展示侧会各读一份字段名。
+    """
+    week_mask = (
+        fragment.get("template_week_mask")
+        or fragment.get("week_mask")
+        or ()
+    )
+    return {
+        "teacher_keys": list(fragment.get("teacher_keys") or teacher_keys_of(fragment)),
+        "teacher_name": fragment.get("teacher_name"),
+        "uid": fragment.get("uid") or fragment.get("fragment_id") or fragment.get("source_key"),
+        "day": int(fragment.get("day_of_week") or fragment.get("day") or 0),
+        "start": int(fragment.get("period_index") or fragment.get("start") or 0),
+        "consecutive": int(fragment.get("consecutive_slots") or fragment.get("consecutive") or 0),
+        "room": fragment.get("classroom_name") or fragment.get("room"),
+        "week_mask": tuple(int(week) for week in week_mask),
+    }
 
 
 def _overlap(start: int, consecutive: int, periods: frozenset[int]) -> int:
@@ -290,11 +327,16 @@ def satisfaction_report(
     ``avg_satisfaction_score`` 与 ``low_satisfaction_count``。
     """
     room_type_of = dict(room_type_of or {})
-    by_teacher: dict[str, list[Mapping[str, Any]]] = {}
+    by_teacher: dict[str, list[dict[str, Any]]] = {}
+    names: dict[str, str] = {}
     for fragment in fragments:
-        for key in fragment.get("teacher_keys") or []:
-            if key in index:
-                by_teacher.setdefault(key, []).append(fragment)
+        item = as_item(fragment)
+        for key in item["teacher_keys"]:
+            if key not in index:
+                continue
+            by_teacher.setdefault(key, []).append(item)
+            if item.get("teacher_name") and key not in names:
+                names[key] = str(item["teacher_name"])
 
     reports: list[dict[str, Any]] = []
     for teacher_key, items in sorted(by_teacher.items()):
@@ -356,6 +398,9 @@ def satisfaction_report(
         )
         reports.append({
             "teacher_key": teacher_key,
+            "teacher_name": names.get(teacher_key),
+            "teacher_id": int(teacher_key.split(":", 1)[1])
+            if teacher_key.startswith("id:") and teacher_key.split(":", 1)[1].isdigit() else None,
             "item_count": len(items),
             "days_used": len({item["day"] for item in items}),
             "satisfaction_score": round(sum(components.values()) / len(components), 4),
@@ -415,6 +460,43 @@ def satisfaction_report(
             "low_satisfaction 按后者判定——只看一个维度的教师不会被 1.0 稀释。"
         ),
     }
+
+
+def template_satisfaction_rows(
+    reports_by_template: Mapping[str, Mapping[str, Any]],
+    *,
+    allocation_task_id: int | None = None,
+    generation_run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """把"每个动态模板的满足度报告"摊平成落库行。
+
+    方案级读数必须按模板算：一次生成产出多个模板（各覆盖不同周次），混在一起平均出来的
+    分数不对应任何一个"方案"。``teacher_id`` 只在画像键本身是 ``id:`` 时有值——引擎里的
+    片段如果只有姓名，就存姓名，不去猜 ID。
+    """
+    rows: list[dict[str, Any]] = []
+    for template_code, report in reports_by_template.items():
+        for teacher in report.get("teachers") or []:
+            rows.append({
+                "allocation_task_id": allocation_task_id,
+                "generation_run_id": generation_run_id,
+                "template_code": str(template_code),
+                "teacher_id": teacher.get("teacher_id"),
+                "teacher_name": teacher.get("teacher_name") or teacher["teacher_key"],
+                "teacher_key": teacher["teacher_key"],
+                "item_count": teacher["item_count"],
+                "days_used": teacher["days_used"],
+                "satisfaction_score": teacher["satisfaction_score"],
+                "preference_score": teacher["preference_score"],
+                # 低满足的判定留在打分的这一侧，展示端只读结论，免得两边各判一次判出分歧。
+                "low_satisfaction": 1 if float(teacher["preference_score"]) < LOW_SATISFACTION_THRESHOLD else 0,
+                # 列名就是落库列名：这些行的唯一消费者是导出/导入那两段。
+                "declared_dimensions_json": json.dumps(teacher["declared_dimensions"], ensure_ascii=False),
+                "components_json": json.dumps(teacher["components"], ensure_ascii=False),
+                "evidence_json": json.dumps(teacher["evidence"], ensure_ascii=False),
+            })
+    rows.sort(key=lambda row: (row["template_code"], row["teacher_name"] or ""))
+    return rows
 
 
 def _periods_of(fragment: Mapping[str, Any]) -> range:

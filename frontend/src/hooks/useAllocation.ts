@@ -63,6 +63,33 @@ export interface TemplateTaskHourAudit {
   status: "OK" | "UNDER" | "OVER";
 }
 
+export interface TeacherSatisfactionEntry {
+  templateCode: string;
+  teacherKey: string;
+  teacherId: number | null;
+  teacherName: string;
+  itemCount: number;
+  daysUsed: number;
+  satisfactionScore: number;
+  preferenceScore: number;
+  lowSatisfaction: boolean;
+  declaredDimensions: string[];
+  primaryReasonDimension: string | null;
+  primaryReasonScore: number | null;
+  components: Record<string, number>;
+  evidence: Record<string, number | null>;
+}
+
+export interface TeacherSatisfactionView {
+  profileApplied: boolean;
+  teacherCount: number;
+  averageSatisfactionScore: number;
+  averagePreferenceScore: number;
+  lowSatisfactionCount: number;
+  teachers: TeacherSatisfactionEntry[];
+  lowSatisfactionTeachers: TeacherSatisfactionEntry[];
+}
+
 export interface TemplateDraftView {
   schemeId: number;
   allocationTaskId: number;
@@ -85,6 +112,8 @@ export interface TemplateDraftView {
     taskHours: TemplateTaskHourAudit[];
     issues: string[];
   };
+  /** 画像未参与本次生成时该块整体不出现，页面据此隐藏整段。 */
+  satisfaction?: TeacherSatisfactionView | null;
 }
 
 interface TeachingTaskBrief {

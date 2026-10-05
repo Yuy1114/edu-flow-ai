@@ -9,6 +9,7 @@ import {
   SchemeTimetable,
   uniqueOptions,
 } from "../components/SchemeDetailView";
+import { TeacherSatisfactionPanel } from "../components/TeacherSatisfactionPanel";
 import type { AllocationScheme, SchemeItem, TemplateDraftView } from "../hooks/useAllocation";
 import { ALL_PERIODS } from "../lib/schedulingTime";
 
@@ -70,6 +71,14 @@ export default function AllocationSchemeDetailPage() {
   const teacherOptions = useMemo(() => uniqueOptions(items, "teacherName"), [items]);
   const classOptions = useMemo(() => uniqueOptions(items, "classGroupName"), [items]);
   const classroomOptions = useMemo(() => uniqueOptions(items, "classroomName"), [items]);
+  // 满足度按 templateCode 落库，页面上要说人话：模板3 而不是 dynamic_template_03。
+  const templateLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    draft?.templates.forEach((template, index) => {
+      labels[template.templateCode] = `模板${index + 1}`;
+    });
+    return labels;
+  }, [draft]);
   const filteredItems = useMemo(
     () => filterSchemeItems(items, { teacher, classGroup, classroom, keyword }),
     [items, teacher, classGroup, classroom, keyword],
@@ -295,6 +304,11 @@ export default function AllocationSchemeDetailPage() {
           </div>
         </div>
       </div>
+
+      <TeacherSatisfactionPanel
+        satisfaction={draft?.satisfaction}
+        templateLabels={templateLabels}
+      />
 
       {loading ? (
         <div className="flex items-center justify-center py-24"><span className="loading loading-spinner loading-lg text-primary" /></div>

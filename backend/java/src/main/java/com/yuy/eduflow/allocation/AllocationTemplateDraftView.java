@@ -7,6 +7,7 @@ public record AllocationTemplateDraftView(
 	Long allocationTaskId,
 	String generationRunId,
 	List<AllocationTemplateDraftTemplate> templates,
-	AllocationTemplateAuditResult audit
+	AllocationTemplateAuditResult audit,
+	AllocationTeacherSatisfactionView satisfaction
 ) {
 }

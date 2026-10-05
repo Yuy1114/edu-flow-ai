@@ -27,6 +27,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/ml/teacher-profiles")
 public class MlTeacherProfileController {
+
+    /** 与生成侧 Python {@code teacher_preferences.LOW_SATISFACTION_THRESHOLD} 保持一致；改一处就要改两处。 */
+    private static final double LOW_SATISFACTION_THRESHOLD = 0.7;
+
     private final AllocationSchemeService allocationSchemeService;
     private final AllocationItemService allocationItemService;
     private final TeacherProfileDocumentService profileDocumentService;
@@ -163,6 +167,30 @@ public class MlTeacherProfileController {
 
         double score = components.values().stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
 
+        // 与生成侧（Python teacher_preferences）同口径：satisfaction_score 是六分量等权，
+        // preference_score 只对教师确实声明过的维度取平均——低满足按后者判定，
+        // 否则"只提了一条要求又没被满足"的教师会被未声明维度的 1.0 稀释到 0.83 以上，
+        // 在页面上永远不算低满足。room_type 在 Java 侧还没接教室类型，故不进声明维度。
+        List<String> declaredDimensions = new ArrayList<>();
+        if (bool(finalProfile.get("avoid_early_period"))) {
+            declaredDimensions.add("early_period");
+        }
+        if (bool(finalProfile.get("avoid_late_period"))) {
+            declaredDimensions.add("late_period");
+        }
+        if (!preferredWeekdays.isEmpty()) {
+            declaredDimensions.add("preferred_weekday");
+        }
+        if (!preferredPeriods.isEmpty()) {
+            declaredDimensions.add("preferred_period");
+        }
+        if (maxDailyLessons > 0) {
+            declaredDimensions.add("daily_load");
+        }
+        double preferenceScore = declaredDimensions.isEmpty()
+            ? 1.0
+            : declaredDimensions.stream().mapToDouble(components::get).average().orElse(1.0);
+
         Map<String, Object> evidence = new LinkedHashMap<>();
         evidence.put("early_item_count", earlyCount);
         evidence.put("late_item_count", lateCount);
@@ -176,6 +204,9 @@ public class MlTeacherProfileController {
         result.put("teacher_name", profile.get("teacher_name"));
         result.put("item_count", items.size());
         result.put("satisfaction_score", round(score));
+        result.put("preference_score", round(preferenceScore));
+        result.put("declared_dimensions", declaredDimensions);
+        result.put("low_satisfaction", round(preferenceScore) < LOW_SATISFACTION_THRESHOLD);
         result.put("components", components);
         result.put("evidence", evidence);
         result.put("profile_used", finalProfile);
@@ -187,15 +218,21 @@ public class MlTeacherProfileController {
             .mapToDouble(report -> number(report.get("satisfaction_score")))
             .average()
             .orElse(0.0);
+        double avgPreference = teacherReports.stream()
+            .mapToDouble(report -> number(report.get("preference_score")))
+            .average()
+            .orElse(0.0);
         long lowCount = teacherReports.stream()
-            .filter(report -> number(report.get("satisfaction_score")) < 0.7)
+            .filter(report -> number(report.get("preference_score")) < LOW_SATISFACTION_THRESHOLD)
             .count();
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("avg_satisfaction_score", round(avg));
+        summary.put("avg_preference_score", round(avgPreference));
         summary.put("teacher_count", teacherReports.size());
         summary.put("low_satisfaction_count", lowCount);
+        summary.put("low_satisfaction_threshold", LOW_SATISFACTION_THRESHOLD);
         summary.put("hard_unavailable_violation_count", 0);
-        summary.put("note", "Scheme-level MVP report uses derived soft preferences; room type component is neutral until classroom type is joined.");
+        summary.put("note", "Scheme-level MVP report uses derived soft preferences; room type component is neutral until classroom type is joined. low_satisfaction 与生成侧一致，按 preference_score（只看已声明维度）判定。");
         return summary;
     }
 

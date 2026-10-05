@@ -28,6 +28,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -50,6 +51,7 @@ public class AllocationTemplateDraftService {
 	private final AllocationItemAdjustmentLogMapper adjustmentLogMapper;
 	private final AllocationSchemeFeedbackMapper schemeFeedbackMapper;
 	private final MlFeedbackEventService feedbackEventService;
+	private final AllocationTeacherSatisfactionMapper satisfactionMapper;
 	private final ObjectMapper objectMapper;
 
 	public AllocationTemplateDraftService(
@@ -61,6 +63,7 @@ public class AllocationTemplateDraftService {
 		AllocationItemAdjustmentLogMapper adjustmentLogMapper,
 		AllocationSchemeFeedbackMapper schemeFeedbackMapper,
 		MlFeedbackEventService feedbackEventService,
+		AllocationTeacherSatisfactionMapper satisfactionMapper,
 		ObjectMapper objectMapper
 	) {
 		this.schemeMapper = schemeMapper;
@@ -71,6 +74,7 @@ public class AllocationTemplateDraftService {
 		this.adjustmentLogMapper = adjustmentLogMapper;
 		this.schemeFeedbackMapper = schemeFeedbackMapper;
 		this.feedbackEventService = feedbackEventService;
+		this.satisfactionMapper = satisfactionMapper;
 		this.objectMapper = objectMapper;
 	}
 
@@ -97,8 +101,134 @@ public class AllocationTemplateDraftService {
 			scheme.getTaskId(),
 			runId,
 			findDraftTemplates(scheme.getTaskId(), runId),
-			snapshot.result()
+			snapshot.result(),
+			satisfactionView(scheme.getTaskId(), runId)
 		);
+	}
+
+	/**
+	 * 方案详情页的画像满足度：逐行读生成侧落库的结论，不在这里重判低满足。
+	 *
+	 * <p>整体读数按教师平均（同一位教师在多个模板里各有读数，先按人聚合再平均），
+	 * 避免出现在模板里排课多的教师把均值拉偏。</p>
+	 */
+	private AllocationTeacherSatisfactionView satisfactionView(Long allocationTaskId, String runId) {
+		List<AllocationTeacherSatisfaction> rows;
+		try {
+			rows = satisfactionMapper.findByRun(allocationTaskId, runId);
+		} catch (DataAccessException ex) {
+			// 迁移 017 尚未在这个库上执行时表不存在；方案详情不该因此整页打不开。
+			log.warn("教师画像满足度不可读，本次跳过展示：allocationTaskId={}, runId={}, cause={}",
+				allocationTaskId, runId, ex.getMostSpecificCause().getMessage());
+			return AllocationTeacherSatisfactionView.EMPTY;
+		}
+		if (rows == null || rows.isEmpty()) {
+			return AllocationTeacherSatisfactionView.EMPTY;
+		}
+
+		List<AllocationTeacherSatisfactionView.TeacherSatisfactionEntry> entries = rows.stream()
+			.map(this::satisfactionEntry)
+			.toList();
+		Map<String, List<AllocationTeacherSatisfactionView.TeacherSatisfactionEntry>> byTeacher = entries.stream()
+			.collect(Collectors.groupingBy(
+				AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::teacherKey,
+				LinkedHashMap::new,
+				Collectors.toList()
+			));
+		long lowTeacherCount = byTeacher.values().stream()
+			.filter(teacherRows -> teacherRows.stream()
+				.anyMatch(AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::lowSatisfaction))
+			.count();
+		List<AllocationTeacherSatisfactionView.TeacherSatisfactionEntry> lowEntries = entries.stream()
+			.filter(AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::lowSatisfaction)
+			.sorted(Comparator.comparingDouble(
+				AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::preferenceScore))
+			.toList();
+
+		return new AllocationTeacherSatisfactionView(
+			true,
+			byTeacher.size(),
+			round4(byTeacher.values().stream()
+				.mapToDouble(teacherRows -> teacherRows.stream()
+					.mapToDouble(AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::satisfactionScore)
+					.average()
+					.orElse(0.0))
+				.average()
+				.orElse(0.0)),
+			round4(byTeacher.values().stream()
+				.mapToDouble(teacherRows -> teacherRows.stream()
+					.mapToDouble(AllocationTeacherSatisfactionView.TeacherSatisfactionEntry::preferenceScore)
+					.average()
+					.orElse(0.0))
+				.average()
+				.orElse(0.0)),
+			(int) lowTeacherCount,
+			entries,
+			lowEntries
+		);
+	}
+
+	private AllocationTeacherSatisfactionView.TeacherSatisfactionEntry satisfactionEntry(
+		AllocationTeacherSatisfaction row
+	) {
+		List<String> declared = readJsonList(row.getDeclaredDimensionsJson());
+		Map<String, Double> components = readJsonMap(row.getComponentsJson());
+		String reasonDimension = declared.stream()
+			.filter(components::containsKey)
+			.min(Comparator.comparingDouble(dimension -> components.get(dimension)))
+			.orElse(null);
+		return new AllocationTeacherSatisfactionView.TeacherSatisfactionEntry(
+			row.getTemplateCode(),
+			row.getTeacherKey(),
+			row.getTeacherId(),
+			row.getTeacherName(),
+			row.getItemCount() == null ? 0 : row.getItemCount(),
+			row.getDaysUsed() == null ? 0 : row.getDaysUsed(),
+			row.getSatisfactionScore() == null ? 0.0 : round4(row.getSatisfactionScore()),
+			row.getPreferenceScore() == null ? 0.0 : round4(row.getPreferenceScore()),
+			Boolean.TRUE.equals(row.getLowSatisfaction()),
+			declared,
+			reasonDimension,
+			reasonDimension == null ? null : components.get(reasonDimension),
+			components,
+			readJsonMap(row.getEvidenceJson()).entrySet().stream()
+				.collect(Collectors.toMap(Map.Entry::getKey, entry -> (Object) entry.getValue(), (a, b) -> a, LinkedHashMap::new))
+		);
+	}
+
+	private List<String> readJsonList(String json) {
+		if (!StringUtils.hasText(json)) {
+			return List.of();
+		}
+		try {
+			List<?> parsed = objectMapper.readValue(json, List.class);
+			return parsed.stream().map(String::valueOf).toList();
+		} catch (RuntimeException ex) {
+			log.warn("满足度列不是可读 JSON，按空处理：{}", json);
+			return List.of();
+		}
+	}
+
+	private Map<String, Double> readJsonMap(String json) {
+		if (!StringUtils.hasText(json)) {
+			return Map.of();
+		}
+		try {
+			Map<?, ?> parsed = objectMapper.readValue(json, Map.class);
+			Map<String, Double> values = new LinkedHashMap<>();
+			parsed.forEach((key, value) -> values.put(
+				String.valueOf(key),
+				value instanceof Number number ? number.doubleValue() : null
+			));
+			return values;
+		} catch (RuntimeException ex) {
+			log.warn("满足度列不是可读 JSON，按空处理：{}", json);
+			return Map.of();
+		}
+	}
+
+	private double round4(double value) {
+		return Math.round(value * 10000d) / 10000d;
 	}
 
 	@Transactional

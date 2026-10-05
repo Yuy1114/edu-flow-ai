@@ -1697,6 +1697,16 @@ def build_phase_cover(
     profile_satisfaction["ranked_fragment_count"] = sum(
         1 for fragment in covered_fragments if int(fragment.get("candidate_rank") or 0) > 0
     )
+    # 方案级读数：每个动态模板就是一份候选方案，各自算一遍。片段走 as_item 时会优先
+    # 取 template_week_mask，所以同一片段不会被多个模板重复计入同一周。
+    profile_satisfaction_templates = {
+        str(template["template_id"]): satisfaction_report(
+            index=profile_index,
+            fragments=template.get("fragments") or [],
+            room_type_of=room_type_of,
+        )
+        for template in template_docs
+    }
     report = {
         "cover_id": "dynamic_cover_v2",
         "phase_weeks": [total_weeks],
@@ -1726,6 +1736,7 @@ def build_phase_cover(
         "model_hit_rate": round(model_hits / max(1, total_frags), 4),
         "model_fallback_error": model_error,
         "profile_satisfaction": profile_satisfaction,
+        "profile_satisfaction_templates": profile_satisfaction_templates,
         "conflicts": audits,
         "conservation_ok": conservation["ok"],
         "conservation_unplaced_skipped": 0,

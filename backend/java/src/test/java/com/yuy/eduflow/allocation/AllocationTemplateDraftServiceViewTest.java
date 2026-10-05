@@ -37,6 +37,7 @@ class AllocationTemplateDraftServiceViewTest {
 	@Mock private AllocationItemAdjustmentLogMapper adjustmentLogMapper;
 	@Mock private AllocationSchemeFeedbackMapper schemeFeedbackMapper;
 	@Mock private MlFeedbackEventService feedbackEventService;
+	@Mock private AllocationTeacherSatisfactionMapper satisfactionMapper;
 
 	private AllocationTemplateDraftService service;
 
@@ -44,7 +45,8 @@ class AllocationTemplateDraftServiceViewTest {
 	void setUp() {
 		service = new AllocationTemplateDraftService(
 			schemeMapper, templateMapper, teachingTaskMapper, classroomMapper, timeSlotService,
-			adjustmentLogMapper, schemeFeedbackMapper, feedbackEventService, new ObjectMapper()
+			adjustmentLogMapper, schemeFeedbackMapper, feedbackEventService, satisfactionMapper,
+			new ObjectMapper()
 		);
 	}
 
@@ -236,6 +238,71 @@ class AllocationTemplateDraftServiceViewTest {
 		week.setTemplateCode("dynamic-1");
 		week.setWeekNumber(weekNumber);
 		return week;
+	}
+
+	@Test
+	void draftViewExposesTeacherSatisfactionAndNamesTheWeakestDeclaredDimension() {
+		AllocationScheme scheme = v35Scheme();
+		when(schemeMapper.findById(7L)).thenReturn(scheme);
+		when(satisfactionMapper.findByRun(8L, "run-1")).thenReturn(List.of(
+			satisfactionRow("张老师", "name:张老师", 0.5, true,
+				"[\"preferred_weekday\",\"early_period\"]",
+				"{\"early_period\":1.0,\"preferred_weekday\":0.0}"),
+			satisfactionRow("李老师", "name:李老师", 0.9, false,
+				"[\"preferred_weekday\"]",
+				"{\"preferred_weekday\":0.9}")
+		));
+
+		AllocationTeacherSatisfactionView view = service.findDraft(7L).satisfaction();
+
+		assertTrue(view.profileApplied());
+		assertEquals(2, view.teacherCount());
+		assertEquals(1, view.lowSatisfactionCount());
+		assertEquals(1, view.lowSatisfactionTeachers().size());
+		// 主因 = 已声明维度里得分最低的那一维：张老师 0.0 的偏好星期，而不是 1.0 的早间时段。
+		assertEquals("preferred_weekday", view.lowSatisfactionTeachers().get(0).primaryReasonDimension());
+		assertEquals(0.0, view.lowSatisfactionTeachers().get(0).primaryReasonScore());
+		assertEquals("张老师", view.lowSatisfactionTeachers().get(0).teacherName());
+		assertEquals(0.7, view.averagePreferenceScore(), 0.0001);
+	}
+
+	@Test
+	void draftViewSurvivesADatabaseWithoutTheSatisfactionTable() {
+		AllocationScheme scheme = v35Scheme();
+		when(schemeMapper.findById(7L)).thenReturn(scheme);
+		when(satisfactionMapper.findByRun(8L, "run-1"))
+			.thenThrow(new org.springframework.jdbc.BadSqlGrammarException(
+				"query", "SELECT 1", new java.sql.SQLException("Table doesn't exist")));
+
+		AllocationTemplateDraftView draft = service.findDraft(7L);
+
+		assertFalse(draft.satisfaction().profileApplied());
+		assertEquals(0, draft.satisfaction().teacherCount());
+	}
+
+	private AllocationTeacherSatisfaction satisfactionRow(
+		String teacherName,
+		String teacherKey,
+		double preferenceScore,
+		boolean lowSatisfaction,
+		String declaredDimensionsJson,
+		String componentsJson
+	) {
+		AllocationTeacherSatisfaction row = new AllocationTeacherSatisfaction();
+		row.setAllocationTaskId(8L);
+		row.setGenerationRunId("run-1");
+		row.setTemplateCode("dynamic-1");
+		row.setTeacherKey(teacherKey);
+		row.setTeacherName(teacherName);
+		row.setItemCount(3);
+		row.setDaysUsed(2);
+		row.setSatisfactionScore(preferenceScore + 0.1);
+		row.setPreferenceScore(preferenceScore);
+		row.setLowSatisfaction(lowSatisfaction);
+		row.setDeclaredDimensionsJson(declaredDimensionsJson);
+		row.setComponentsJson(componentsJson);
+		row.setEvidenceJson("{\"preferred_weekday_hits\":0}");
+		return row;
 	}
 
 	private AllocationTemplateAuditEntry entry(Long fragmentId, int week, int period) {
